@@ -74,6 +74,7 @@ function Invoke-KimBoxStageRelease {
         'app.log.*',
         'window-state.json',
         'boss-key.json',
+        'settings.json',
         'KimBoxPC.exe',
         'zlib.dll',
         '*.lnk',
@@ -205,6 +206,7 @@ function Invoke-KimBoxStageRelease {
         'data\app.log',
         'data\window-state.json',
         'data\boss-key.json',
+        'data\settings.json',
         'category-filter.json',
         'KimBoxPC.exe',
         'zlib.dll'

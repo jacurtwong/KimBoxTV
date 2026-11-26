@@ -15,7 +15,7 @@ KimBoxTV 本身采用 **GNU General Public License v3.0（[LICENSE](LICENSE)）*
 | **dio** | MIT | HTTP 网络请求 |
 | **window_manager** | MIT | Windows 桌面窗口管理 |
 | **sqlite3 / sqlite3_flutter_libs** | MIT（SQLite 本身为 Public Domain） | 本地数据库持久化 |
-| **cupertino_icons / crypto / file_selector / package_info_plus / path / path_provider / screen_retriever / shared_preferences / url_launcher / xml** | MIT / BSD-3-Clause | 基础工具与平台插件（详见各包内 LICENSE） |
+| **cupertino_icons / crypto / file_selector / package_info_plus / path / screen_retriever / url_launcher / xml** | MIT / BSD-3-Clause | 基础工具与平台插件（详见各包内 LICENSE） |
 
 ---
 

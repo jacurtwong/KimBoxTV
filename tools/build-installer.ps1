@@ -82,14 +82,48 @@ Name: "{autodesktop}\KimBoxTV"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"
 Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "启动 KimBoxTV"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
+Type: files; Name: "{app}\category-filter.json"
+Type: files; Name: "{app}\category-baseline.json"
 Type: filesandordirs; Name: "{app}\data\cache"
 Type: filesandordirs; Name: "{app}\data\jvm"
 Type: filesandordirs; Name: "{app}\data\updates"
 Type: files; Name: "{app}\data\window-state.json"
 Type: files; Name: "{app}\data\app.log"
 Type: files; Name: "{app}\data\app.log.1"
+Type: filesandordirs; Name: "{userappdata}\KimBoxTV\KimBoxTV"
 Type: dirifempty; Name: "{app}\data"
 Type: dirifempty; Name: "{app}"
+
+[Code]
+var
+  DeleteDataConfirmed: Boolean;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  AppDir, DataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    AppDir := ExpandConstant('{app}');
+    DataDir := AddBackslash(AppDir) + 'data';
+    if DirExists(DataDir) and (not UninstallSilent) then
+    begin
+      DeleteDataConfirmed :=
+        MsgBox('是否同时删除配置源、收藏、播放历史及备份（data 文件夹）？' + #13#10#13#10 +
+               '选「是」将彻底清空应用目录及全部数据，选「否」则保留以便重装恢复。',
+               mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+      if DeleteDataConfirmed then
+      begin
+        DelTree(DataDir, True, True, True);
+        RemoveDir(AppDir);
+      end;
+    end;
+  end else if CurUninstallStep = usDone then
+  begin
+    if DeleteDataConfirmed then
+      RemoveDir(ExpandConstant('{app}'));
+  end;
+end;
 "@
 [System.IO.File]::WriteAllText($iss, $issText, (New-Object System.Text.UTF8Encoding($true)))
 

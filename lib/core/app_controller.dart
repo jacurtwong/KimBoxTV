@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app_logger.dart';
 import 'boss_key_service.dart';
@@ -19,6 +18,7 @@ import 'models.dart';
 import 'mpv_player_service.dart';
 import 'paths.dart';
 import 'player_launcher.dart';
+import 'settings_store.dart';
 import 'spider_engine.dart';
 import 'updater.dart';
 
@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.18',
+    this.version = '3.18.19',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.18',
+      current: '3.18.19',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -334,7 +334,7 @@ class AppController extends StateNotifier<AppState> {
 
   static const _fullscreenChannel = MethodChannel('kimbox/window_fullscreen');
   final MpvPlayerService mpvService = MpvPlayerService();
-  late SharedPreferences _prefs;
+  final LocalSettingsStore _prefs = LocalSettingsStore();
 
   Timer? _toastTimer;
   Timer? _mpvPollTimer;
@@ -393,7 +393,7 @@ class AppController extends StateNotifier<AppState> {
     AppUpdater.cleanupOnStart();
     TvboxDb.backup('startup');
 
-    _prefs = await SharedPreferences.getInstance();
+    _prefs.load();
     final scope = _prefs.getString('tvbox_scope') ?? 'all';
     final playerPref = _prefs.getString('tvbox_player') ?? '';
     final autoNext = _prefs.getString('tvbox_autonext') != '0';

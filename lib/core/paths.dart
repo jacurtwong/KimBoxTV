@@ -17,6 +17,7 @@ class AppPaths {
   static late final String logFile;
   static late final String bossKeyFile;
   static late final String windowStateFile;
+  static late final String settingsFile;
   static late final String categoryFilterFile;
   static String? jvmDir;
   static String? jreExe;
@@ -34,6 +35,7 @@ class AppPaths {
     logFile = p.join(dataDir, 'app.log');
     bossKeyFile = p.join(dataDir, 'boss-key.json');
     windowStateFile = p.join(dataDir, 'window-state.json');
+    settingsFile = p.join(dataDir, 'settings.json');
     categoryFilterFile = p.join(appRoot, 'category-filter.json');
 
     for (final d in [dataDir, cacheDir, backupsDir]) {

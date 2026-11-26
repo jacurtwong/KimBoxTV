@@ -10,6 +10,7 @@ import 'package:kimbox_tv/core/hls_ad_filter.dart';
 import 'package:kimbox_tv/core/models.dart';
 import 'package:kimbox_tv/core/mpv_player_service.dart';
 import 'package:kimbox_tv/core/paths.dart';
+import 'package:kimbox_tv/core/settings_store.dart';
 import 'package:kimbox_tv/ui/widgets/poster_image_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -390,6 +391,41 @@ void main() {
         expect(sum.cached, 1);
       } finally {
         CategoryScanner.resetBaselineCacheForTesting();
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    });
+  });
+
+  group('LocalSettingsStore', () {
+    test('persists settings in data dir and cleans legacy nested support dir',
+        () async {
+      final tmp = Directory.systemTemp.createTempSync('kimbox_settings_test_');
+      try {
+        final appDataRoot = p.join(tmp.path, 'roaming');
+        final legacyDir = Directory(p.join(appDataRoot, 'KimBoxTV', 'KimBoxTV'))
+          ..createSync(recursive: true);
+        File(p.join(legacyDir.path, 'shared_preferences.json')).writeAsStringSync(
+          jsonEncode({'flutter.tvbox_hwdec': 'hw', 'flutter.tvbox_scope': 'site'}),
+        );
+
+        final settingsPath = p.join(tmp.path, 'data', 'settings.json');
+        final store = LocalSettingsStore();
+        store.load(
+          customFilePath: settingsPath,
+          legacyAppDataRoot: appDataRoot,
+        );
+        expect(store.getString('tvbox_hwdec'), 'hw');
+        expect(store.getString('tvbox_scope'), 'site');
+        expect(legacyDir.existsSync(), false);
+
+        await store.setString('tvbox_admode', 'skip');
+        final reloaded = LocalSettingsStore()
+          ..load(customFilePath: settingsPath, legacyAppDataRoot: appDataRoot);
+        expect(reloaded.getString('tvbox_admode'), 'skip');
+        expect(reloaded.getString('tvbox_hwdec'), 'hw');
+      } finally {
         try {
           tmp.deleteSync(recursive: true);
         } catch (_) {}

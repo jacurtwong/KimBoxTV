@@ -5,6 +5,20 @@
 
 ---
 
+## v3.18.19
+- **版本**：`3.18.19`
+- **日期**：`2026-11-26`
+- **标题**：消除 `%APPDATA%\KimBoxTV\KimBoxTV` 嵌套空目录并完善安装器卸载清理
+- **背景**：卸载后在 `%APPDATA%\KimBoxTV` 内残留了 `KimBoxTV` 空子目录、`category-filter.json` 与 `data\` 文件夹。排查根因有二：（1）`shared_preferences` / `path_provider_windows` 会依据 `Runner.rc` 的 `CompanyName` 与 `ProductName` 自动在 `%APPDATA%\KimBoxTV\KimBoxTV\` 建出支持目录，恰好与默认安装目录 `%APPDATA%\KimBoxTV` 重合嵌套；（2）安装脚本 `[UninstallDelete]` 漏清程序首次运行释放的 `{app}\category-filter.json`，且缺少交互式“是否同时清理个人数据 `data\`”选项。
+- **改动**：
+  - 新增 `LocalSettingsStore`（统一持久化至 `data\settings.json`），移除 `shared_preferences` 与 `path_provider` 依赖；首次加载时自动迁移旧 `shared_preferences.json` 配置并清理遗留的空嵌套 `KimBoxTV\KimBoxTV` 目录；
+  - 更新 `tools/build-installer.ps1`：`[UninstallDelete]` 补齐 `{app}\category-filter.json`、`{app}\category-baseline.json` 与遗留 `{userappdata}\KimBoxTV\KimBoxTV`；新增卸载完成前确认弹窗（非静默卸载时询问是否一并删除 `data\` 配置源/收藏/历史/备份，选“是”则彻底清空整个应用目录）；
+  - 更新 `tools/_stage-release.ps1` 排除 `settings.json` 避免打包带出本机开发设置。
+- **验证**：新增 `LocalSettingsStore` 持久化、旧配置迁移与空目录清理单测，`flutter pub get && flutter analyze && flutter test` 全部通过；构建安装包实测交互卸载可彻底清除目录。
+- **已知边界 / 回滚方式**：静默卸载（如脚本覆盖更新场景）不会触发弹窗删除 `data\`，确保升级不丢数据；如需恢复 `shared_preferences` 可回退本提交。
+
+---
+
 ## v3.18.18
 - **版本**：`3.18.18`
 - **日期**：`2026-11-26`
