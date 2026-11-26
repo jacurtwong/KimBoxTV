@@ -104,14 +104,14 @@ class UpdateStatusSnapshot {
 class AppUpdater {
   AppUpdater._();
 
-  static const String repo = 'jacurtwong/KimboxPC';
+  static const String repo = 'jacurtwong/KimBoxTV';
   static const String apiUrl =
       'https://api.github.com/repos/$repo/releases/latest';
   static const String releasesUrl = 'https://github.com/$repo/releases';
   static const String _ua = 'KimBoxTV-Updater';
   static const int _checkIntervalMs = 15 * 60 * 1000;
 
-  static String currentVersion = '3.18.10';
+  static String currentVersion = '3.18.11';
   static bool _checking = false;
   static int _lastCheck = 0;
   static ReleaseInfo? _latest;
