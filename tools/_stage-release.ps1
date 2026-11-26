@@ -74,8 +74,6 @@ function Invoke-KimBoxStageRelease {
         'app.log.*',
         'window-state.json',
         'boss-key.json',
-        'category-baseline.json',
-        'category-filter.json',
         'KimBoxPC.exe',
         'zlib.dll',
         '*.lnk',
@@ -98,6 +96,10 @@ function Invoke-KimBoxStageRelease {
     if ($LASTEXITCODE -ge 8) {
         throw '复制 Release 文件到暂存目录失败'
     }
+    # 仅剔除根目录可能存在的测试覆盖版 category-filter.json（保留 data\flutter_assets\assets\ 内的默认资源）
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $TargetDir 'category-filter.json')
+    # 确保根目录也提供干净的预设分类基线，与内置 assets\category-baseline.json 保持一致
+    Copy-Item -Path (Join-Path $Root 'assets\category-baseline.json') -Destination (Join-Path $TargetDir 'category-baseline.json') -Force
     Copy-Item -Path $iconSrc -Destination (Join-Path $TargetDir 'app_icon.ico') -Force
 
     # 4) 兜底补齐 VC++ / UCRT 运行库 DLL
@@ -139,6 +141,11 @@ function Invoke-KimBoxStageRelease {
         'data\app.so',
         'data\icudtl.dat',
         'data\flutter_assets',
+        'data\flutter_assets\assets\category-baseline.json',
+        'data\flutter_assets\assets\category-filter.json',
+        'data\flutter_assets\assets\icon.png',
+        'data\flutter_assets\assets\logo.png',
+        'category-baseline.json',
         'libmpv-2.dll',
         'libEGL.dll',
         'libGLESv2.dll',
@@ -198,7 +205,6 @@ function Invoke-KimBoxStageRelease {
         'data\app.log',
         'data\window-state.json',
         'data\boss-key.json',
-        'category-baseline.json',
         'category-filter.json',
         'KimBoxPC.exe',
         'zlib.dll'
