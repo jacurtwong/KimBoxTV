@@ -1,5 +1,5 @@
 ﻿# 打包 KimBoxTV 安装版（Inno Setup）
-# 用法：双击「制作安装包.bat」，或执行：
+# 用法：双击「一键打包全部.bat」，或执行：
 #   powershell -ExecutionPolicy Bypass -File tools\build-installer.ps1 [-SkipBuild]
 #
 # 产物：dist\KimBoxTV_v<version>_Setup.exe（已排除开发/运行缓存与隐私数据，并补齐全部运行库 DLL）

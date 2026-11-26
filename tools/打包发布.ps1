@@ -1,5 +1,5 @@
 ﻿# 打包 KimBoxTV 便携版 zip（已排除运行缓存与隐私数据，含全部运行库 DLL）
-# 用法：双击「打包发布.bat」，或执行：
+# 用法：双击「一键打包全部.bat」，或执行：
 #   powershell -ExecutionPolicy Bypass -File tools\打包发布.ps1 [-SkipBuild]
 
 param(
