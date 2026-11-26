@@ -6,37 +6,86 @@ import 'models.dart';
 class CmsEngine {
   CmsEngine._();
 
+  static const Map<String, String> _cmsHeaders = {
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+  };
+
   static final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
       responseType: ResponseType.plain,
-      headers: const {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-      },
+      headers: _cmsHeaders,
     ),
   );
+
+  static final Dio _probeDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 6),
+      receiveTimeout: const Duration(seconds: 6),
+      responseType: ResponseType.plain,
+      headers: _cmsHeaders,
+    ),
+  );
+
+  static Map<String, dynamic>? _decodeCmsResponse(String rawData) {
+    final raw = rawData.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('<')) {
+      return _parseXmlCms(raw);
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> _getWith(
+    Dio client,
+    String url,
+    Map<String, dynamic> params,
+  ) async {
+    try {
+      final resp = await client.get<String>(url, queryParameters: params);
+      return _decodeCmsResponse(resp.data ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<Map<String, dynamic>?> request(
     String url, [
     Map<String, dynamic> params = const {},
-  ]) async {
-    try {
-      final resp = await _dio.get<String>(url, queryParameters: params);
-      final raw = (resp.data ?? '').trim();
-      if (raw.isEmpty) return null;
-      if (raw.startsWith('<')) {
-        return _parseXmlCms(raw);
-      }
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
-      return null;
-    } catch (_) {
-      return null;
+  ]) =>
+      _getWith(_dio, url, params);
+
+  /// 分类探测专用：6s 短超时，先发轻量 `ac=list`；有片返回 true，
+  /// 确认返回空数组时再复核 `ac=videolist`，网络失败返回 null 避免误判为空分类。
+  static Future<bool?> probeCategoryHasItems(
+    SiteInfo site,
+    String typeId,
+  ) async {
+    final listResp =
+        await _getWith(_probeDio, site.api, {'ac': 'list', 't': typeId, 'pg': 1});
+    if (listResp != null && listResp['list'] is List) {
+      if ((listResp['list'] as List).isNotEmpty) return true;
+      final vidResp = await _getWith(
+        _probeDio,
+        site.api,
+        {'ac': 'videolist', 't': typeId, 'pg': 1},
+      );
+      if (vidResp == null || vidResp['list'] is! List) return null;
+      return (vidResp['list'] as List).isNotEmpty;
     }
+    final vidResp = await _getWith(
+      _probeDio,
+      site.api,
+      {'ac': 'videolist', 't': typeId, 'pg': 1},
+    );
+    if (vidResp == null || vidResp['list'] is! List) return null;
+    return (vidResp['list'] as List).isNotEmpty;
   }
 
   static Map<String, dynamic>? _parseXmlCms(String xmlStr) {

@@ -5,6 +5,20 @@
 
 ---
 
+## v3.18.18
+- **版本**：`3.18.18`
+- **日期**：`2026-11-26`
+- **标题**：`category-baseline.json` SHA-256 哈希脱敏、清理 Git 历史与优化后台分类扫描
+- **背景**：合规审计发现内置 `assets/category-baseline.json` 含有 20 条明文 CMS 采集接口地址与站名，且已从早期提交起进入 Git 历史，与“纯空壳聚合播放器”定位不符；同时原后台分类扫描采用跨站与站内双层纯串行，每个空分类连试两次长超时请求且无负缓存与错峰避让，全量首扫动辄耗时 2~4 分钟并可能和首屏播放/频控冲突。另 `windows/runner/Runner.rc` 仍残留旧 `MIT License.` 版权字符串。
+- **改动**：
+  - **基线脱敏与历史清理**：将 `assets/category-baseline.json` 重构为 `version: 2` 仅保留 `_normalizeApi(api)` 的单向 SHA-256 摘要（0 条明文 URL / 站名），并同步重写 Git 全历史与远端标签（`filter-branch` + `git push --force`）彻底清除旧历史中的明文地址；`CategoryScanner.seedFromBaseline` 按 `hashApi` 精确命中，继续保持秒开免扫描加速；
+  - **优化后台分类扫描**：新增 `CmsEngine.probeCategoryHasItems`（6 秒短超时优先探测轻量 `ac=list` 并在网络失败时返回 `null`，避免死站拖慢队列或误判整站空分类）；`CategoryScanner.scanConfigCategories` 升级为**跨站 3 并发 + 站内 40ms 微节流 + 自动后台扫描 3 秒延迟错峰**（手动扫描立即唤醒执行），失败站点记 1 小时短时负缓存且不计入已缓存统计；
+  - **协议声明一致性**：将 `windows/runner/Runner.rc` 中 `LegalCopyright` 统一为 `GPL-3.0 License.`。
+- **验证**：验证全历史 `git log --all` 与新 `assets/category-baseline.json` 均无明文采集 URL；新增 `CategoryScanner hashed baseline & negative cache` 单元测试并通过 `flutter analyze && flutter test`。
+- **已知边界 / 回滚方式**：哈希匹配依赖规范化后的精确 API 地址（去尾部 `/`、小写），用户自带完全未出现过的新 CMS 接口会在首次导入 3 秒后后台并发探测一次；旧 GitHub Releases（`v3.18.11`~`v3.18.17`）二进制附件仍含历史压缩包，可在 `v3.18.18` 验收发布后按需下架清理。
+
+---
+
 ## v3.18.17（文档与开源合规补充）
 - **版本**：`v3.18.17`（文档提交，未变更二进制构建号）
 - **日期**：`2026-11-26`

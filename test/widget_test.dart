@@ -321,4 +321,79 @@ void main() {
       expect(unscaled.height, 450);
     });
   });
+
+  group('CategoryScanner hashed baseline & negative cache', () {
+    test('seeds empty categories by SHA-256 API hash without plaintext URLs',
+        () async {
+      final baselineRaw = File('assets/category-baseline.json').readAsStringSync();
+      expect(baselineRaw.contains('http://'), false);
+      expect(baselineRaw.contains('https://'), false);
+      final parsedBaseline = jsonDecode(baselineRaw) as Map<String, dynamic>;
+      expect(parsedBaseline['version'], 2);
+      expect((parsedBaseline['hashes'] as Map).length, 20);
+
+      final tmp = Directory.systemTemp.createTempSync('kimbox_cat_scan_test_');
+      try {
+        AppPaths.appRoot = tmp.path;
+        AppPaths.cacheDir = p.join(tmp.path, 'cache');
+        Directory(AppPaths.cacheDir).createSync(recursive: true);
+
+        const apiA = 'https://Vod.Example.com/api.php/provide/vod///';
+        final hashA = CategoryScanner.hashApi('https://vod.example.com/api.php/provide/vod');
+        expect(CategoryScanner.hashApi(apiA), hashA);
+
+        File(p.join(tmp.path, 'category-baseline.json')).writeAsStringSync(
+          jsonEncode({
+            'version': 2,
+            'at': 12345,
+            'hashes': {
+              hashA: {
+                'total': 10,
+                'empty': ['1', '2'],
+                'alive': ['6'],
+              },
+            },
+          }),
+        );
+        CategoryScanner.resetBaselineCacheForTesting();
+
+        const s1 = SiteInfo(
+          key: 'site_hashed',
+          name: '测试站',
+          type: 1,
+          api: apiA,
+        );
+        const sFail = SiteInfo(
+          key: 'site_failed',
+          name: '失败站',
+          type: 1,
+          api: 'https://down.example.com/api',
+        );
+
+        await CategoryScanner.seedFromBaseline(99, const [s1, sFail]);
+        final emptyRec = CategoryScanner.getSiteEmptyCache(99, 'site_hashed');
+        expect(emptyRec.fresh, true);
+        expect(emptyRec.empty, ['1', '2']);
+
+        // Negative cache entry should not be treated as valid or counted in summary
+        final catCache = CategoryScanner.loadCatCache(99);
+        (catCache['sites'] as Map)['site_failed'] = {
+          'at': DateTime.now().millisecondsSinceEpoch,
+          'failed': true,
+          'fp': sFail.fingerprint,
+        };
+        CategoryScanner.saveCatCache(99, catCache);
+
+        expect(CategoryScanner.getSiteEmptyCache(99, 'site_failed').fresh, false);
+        final sum = CategoryScanner.summary(99, const [s1, sFail]);
+        expect(sum.cms, 2);
+        expect(sum.cached, 1);
+      } finally {
+        CategoryScanner.resetBaselineCacheForTesting();
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    });
+  });
 }

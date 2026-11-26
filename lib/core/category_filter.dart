@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'cms_engine.dart';
 import 'models.dart';
@@ -207,18 +209,45 @@ class CatScanSummary {
 class CategoryScanner {
   CategoryScanner._();
 
+  static const int _scanConcurrency = 3;
+  static const Duration _catProbeDelay = Duration(milliseconds: 40);
+  static const Duration _failTtl = Duration(hours: 1);
+
   static int? _runningConfigId;
   static bool _running = false;
   static int _total = 0;
   static int _scanned = 0;
   static String _current = '';
+  static int _scanSeq = 0;
+  static bool _waitingInitialDelay = false;
+  static Completer<void>? _delayCompleter;
   static Map<String, dynamic>? _baselineCache;
+
+  static void _wakeDelay() {
+    final c = _delayCompleter;
+    if (c != null && !c.isCompleted) c.complete();
+  }
+
+  static void resetBaselineCacheForTesting() {
+    _baselineCache = null;
+  }
 
   static String _catCachePath(int id) =>
       p.join(AppPaths.cacheDir, 'categories_$id.json');
 
   static String _normalizeApi(String api) =>
       api.trim().replaceAll(RegExp(r'/+$'), '').toLowerCase();
+
+  /// 对规范化后的站点 API 计算单向 SHA-256 摘要，使内置基线不含任何明文 URL。
+  static String hashApi(String api) =>
+      sha256.convert(utf8.encode(_normalizeApi(api))).toString();
+
+  static bool _isFailedRecord(dynamic rec, {int? nowMs}) {
+    if (rec is! Map || rec['failed'] != true) return false;
+    if (nowMs == null) return true;
+    final at = (rec['at'] as num?)?.toInt() ?? 0;
+    return (nowMs - at) < _failTtl.inMilliseconds;
+  }
 
   static Map<String, dynamic> loadCatCache(int id) {
     final file = File(_catCachePath(id));
@@ -235,6 +264,7 @@ class CategoryScanner {
 
   static void saveCatCache(int id, Map<String, dynamic> obj) {
     try {
+      Directory(AppPaths.cacheDir).createSync(recursive: true);
       File(_catCachePath(id)).writeAsStringSync(jsonEncode(obj));
     } catch (_) {}
   }
@@ -245,22 +275,40 @@ class CategoryScanner {
       if (raw != null) {
         try {
           final obj = jsonDecode(raw);
-          if (obj is Map && obj['sites'] is Map) {
+          if (obj is Map &&
+              (obj['hashes'] is Map || obj['sites'] is Map)) {
             _baselineCache = Map<String, dynamic>.from(obj);
           }
         } catch (_) {}
       }
-      _baselineCache ??= {'version': 1, 'at': 0, 'sites': <String, dynamic>{}};
+      _baselineCache ??= {
+        'version': 2,
+        'at': 0,
+        'hashes': <String, dynamic>{},
+      };
     }
 
+    final baseHashes = _baselineCache!['hashes'];
     final baseSites = _baselineCache!['sites'];
-    if (baseSites is! Map || baseSites.isEmpty) return;
+    final hasHashes = baseHashes is Map && baseHashes.isNotEmpty;
+    final hasSites = baseSites is Map && baseSites.isNotEmpty;
+    if (!hasHashes && !hasSites) return;
+
     final cache = loadCatCache(configId);
     final cacheSites = Map<String, dynamic>.from(cache['sites'] as Map);
     var seeded = 0;
     for (final site in sites) {
-      if (cacheSites.containsKey(site.key)) continue;
-      final rec = baseSites[_normalizeApi(site.api)];
+      final existing = cacheSites[site.key];
+      if (existing is Map && existing['failed'] != true) continue;
+      final norm = _normalizeApi(site.api);
+      if (norm.isEmpty) continue;
+      dynamic rec;
+      if (hasHashes) {
+        rec = baseHashes[hashApi(norm)];
+      }
+      if (rec is! Map && hasSites) {
+        rec = baseSites[norm];
+      }
       if (rec is! Map) continue;
       cacheSites[site.key] = {
         'at': DateTime.now().millisecondsSinceEpoch,
@@ -304,7 +352,9 @@ class CategoryScanner {
     if (configId == null) return (fresh: false, empty: const []);
     final cache = loadCatCache(configId);
     final rec = (cache['sites'] as Map)[siteKey];
-    if (rec is! Map) return (fresh: false, empty: const []);
+    if (rec is! Map || rec['failed'] == true) {
+      return (fresh: false, empty: const []);
+    }
     final empty = (rec['empty'] as List?)?.map((e) => e.toString()).toList() ??
         const <String>[];
     return (fresh: true, empty: empty);
@@ -319,7 +369,7 @@ class CategoryScanner {
     var lastAt = 0;
     for (final s in cms) {
       final rec = cacheSites[s.key];
-      if (rec is! Map) continue;
+      if (rec is! Map || rec['failed'] == true) continue;
       cached++;
       final at = (rec['at'] as num?)?.toInt() ?? 0;
       if (at > lastAt) lastAt = at;
@@ -336,7 +386,10 @@ class CategoryScanner {
     );
   }
 
-  static Future<Map<String, dynamic>?> _scanSite(SiteInfo site) async {
+  static Future<Map<String, dynamic>?> _scanSite(
+    SiteInfo site,
+    bool Function() shouldAbort,
+  ) async {
     List<CategoryItem> classes = [];
     try {
       final home = await CmsEngine.getHome(site);
@@ -348,20 +401,29 @@ class CategoryScanner {
     } catch (_) {
       return null;
     }
+    if (classes.isEmpty) return null;
+
     final empty = <String>[];
     final alive = <String>[];
-    for (final c in classes) {
-      try {
-        final r = await CmsEngine.getCategory(site, c.typeId, 1);
-        if (r.list.isNotEmpty) {
-          alive.add(c.typeId);
-        } else {
-          empty.add(c.typeId);
-        }
-      } catch (_) {
+    var errors = 0;
+    for (var i = 0; i < classes.length; i++) {
+      if (shouldAbort()) return null;
+      final c = classes[i];
+      final hasItems = await CmsEngine.probeCategoryHasItems(site, c.typeId);
+      if (hasItems == true) {
+        alive.add(c.typeId);
+      } else if (hasItems == false) {
+        empty.add(c.typeId);
+      } else {
+        errors++;
         alive.add(c.typeId);
       }
-      await Future.delayed(const Duration(milliseconds: 120));
+      if (i + 1 < classes.length) {
+        await Future.delayed(_catProbeDelay);
+      }
+    }
+    if (errors > 0 && errors * 10 > classes.length * 6) {
+      return null;
     }
     return {
       'at': DateTime.now().millisecondsSinceEpoch,
@@ -379,8 +441,17 @@ class CategoryScanner {
     required int? Function() currentConfigId,
     String mode = 'missing',
     bool forceClear = false,
+    Duration initialDelay = Duration.zero,
   }) async {
-    if (_running && _runningConfigId == configId) return;
+    if (_running && _runningConfigId == configId) {
+      if (initialDelay == Duration.zero && _waitingInitialDelay) {
+        _wakeDelay();
+      }
+      return;
+    }
+    final seq = ++_scanSeq;
+    _wakeDelay();
+
     final cmsSites = sites.where((x) => !x.isDexSpider).toList();
     final cache = loadCatCache(configId);
     if (forceClear) {
@@ -388,9 +459,17 @@ class CategoryScanner {
       saveCatCache(configId, cache);
     }
     final cacheSites = Map<String, dynamic>.from(cache['sites'] as Map);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final onlyNew = mode != 'all';
     final todo = onlyNew
-        ? cmsSites.where((s) => !cacheSites.containsKey(s.key)).toList()
+        ? cmsSites.where((s) {
+            final rec = cacheSites[s.key];
+            if (rec is! Map) return true;
+            if (rec['failed'] == true) {
+              return !_isFailedRecord(rec, nowMs: nowMs);
+            }
+            return false;
+          }).toList()
         : List<SiteInfo>.from(cmsSites);
     todo.sort((a, b) =>
         (a.key == activeSiteKey ? -1 : 0) - (b.key == activeSiteKey ? -1 : 0));
@@ -400,22 +479,53 @@ class CategoryScanner {
     _running = true;
     _total = todo.length;
     _scanned = 0;
+    _current = '';
     cache['fingerprint'] = sites.map((x) => x.fingerprint).join('|');
     saveCatCache(configId, cache);
 
-    for (final site in todo) {
-      if (currentConfigId() != configId) break;
-      _current = site.name.isNotEmpty ? site.name : site.key;
-      final rec = await _scanSite(site);
-      if (rec != null) {
-        final latest = loadCatCache(configId);
-        (latest['sites'] as Map)[site.key] = rec;
-        saveCatCache(configId, latest);
+    try {
+      if (initialDelay > Duration.zero) {
+        _waitingInitialDelay = true;
+        final c = Completer<void>();
+        _delayCompleter = c;
+        await Future.any([Future<void>.delayed(initialDelay), c.future]);
+        _waitingInitialDelay = false;
+        _delayCompleter = null;
+        if (seq != _scanSeq || currentConfigId() != configId) return;
       }
-      _scanned++;
-      await Future.delayed(const Duration(milliseconds: 300));
+
+      var nextIdx = 0;
+      final workerCount = math.min(_scanConcurrency, todo.length);
+      Future<void> worker() async {
+        while (nextIdx < todo.length) {
+          if (seq != _scanSeq || currentConfigId() != configId) break;
+          final site = todo[nextIdx++];
+          _current = site.name.isNotEmpty ? site.name : site.key;
+          final rec = await _scanSite(
+            site,
+            () => seq != _scanSeq || currentConfigId() != configId,
+          );
+          if (seq != _scanSeq || currentConfigId() != configId) break;
+          final latest = loadCatCache(configId);
+          (latest['sites'] as Map)[site.key] = rec ??
+              {
+                'at': DateTime.now().millisecondsSinceEpoch,
+                'failed': true,
+                'fp': site.fingerprint,
+              };
+          saveCatCache(configId, latest);
+          _scanned++;
+        }
+      }
+
+      await Future.wait(List.generate(workerCount, (_) => worker()));
+    } finally {
+      if (seq == _scanSeq) {
+        _waitingInitialDelay = false;
+        _delayCompleter = null;
+        _running = false;
+        _current = '';
+      }
     }
-    _running = false;
-    _current = '';
   }
 }
