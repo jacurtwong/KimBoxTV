@@ -51,6 +51,11 @@ class CategoryFilterService {
     '写真',
     '擦边',
     '福利',
+    '电影',
+    '电影片',
+    '连续剧',
+    '综艺片',
+    '动漫片',
   ];
 
   static DateTime? _cachedMtime;

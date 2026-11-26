@@ -225,6 +225,10 @@ void main() {
         expect(CategoryFilterService.isBlockedCategoryName('电影', cspSite), false);
         expect(CategoryFilterService.isBlockedCategoryName('伦理', cspSite), false);
         expect(CategoryFilterService.isBlockedCategoryName('电影', cspApiOnly), false);
+        expect(
+          CategoryFilterService.defaultBlock,
+          containsAll(['电影', '电影片', '连续剧', '综艺片', '动漫片']),
+        );
       } finally {
         try {
           tmp.deleteSync(recursive: true);
