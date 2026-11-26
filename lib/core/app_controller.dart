@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.19',
+    this.version = '3.18.20',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.19',
+      current: '3.18.20',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -813,6 +813,7 @@ class AppController extends StateNotifier<AppState> {
           jvmStatus: _buildJvmStatus(),
         );
         CategoryScanner.invalidateCatCache(row.id, state.sites);
+        await CategoryScanner.seedFromBaseline(row.id, state.sites);
         unawaited(CategoryScanner.scanConfigCategories(
           configId: row.id,
           sites: state.sites,

@@ -269,8 +269,34 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
   void initState() {
     super.initState();
     _refreshLocalStats();
+    if (_catSummary.running) {
+      _ensureCatPollTimer();
+    }
     Future.microtask(() {
       ref.read(appControllerProvider.notifier).refreshUpdateStatus(force: false);
+    });
+  }
+
+  void _ensureCatPollTimer({bool notifyWhenDone = false}) {
+    _catPollTimer?.cancel();
+    _catPollTimer =
+        Timer.periodic(const Duration(milliseconds: 1000), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(_refreshLocalStats);
+      if (!_catSummary.running) {
+        t.cancel();
+        if (notifyWhenDone) {
+          ref
+              .read(appControllerProvider.notifier)
+              .showToast('分类扫描完成：${_catSummary.cached} 个源已缓存', 4000);
+        }
+        if (!ref.read(appControllerProvider).playerOpen) {
+          ref.read(appControllerProvider.notifier).loadHome();
+        }
+      }
     });
   }
 
@@ -318,7 +344,11 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
           hint: '✨ 已更新至最新$diffText',
           color: const Color(0xFF4ADE80),
         );
+        _refreshLocalStats();
       });
+      if (_catSummary.running) {
+        _ensureCatPollTimer();
+      }
       ref
           .read(appControllerProvider.notifier)
           .showToast('✨ 「${c.displayName}」已更新至最新$diffText', 3200);
@@ -361,24 +391,8 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
               : '开始全量重扫（可继续使用，扫完自动更新标签）',
           4000,
         );
-    _catPollTimer?.cancel();
-    _catPollTimer =
-        Timer.periodic(const Duration(milliseconds: 1500), (t) {
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      setState(_refreshLocalStats);
-      if (!_catSummary.running) {
-        t.cancel();
-        ref
-            .read(appControllerProvider.notifier)
-            .showToast('分类扫描完成：${_catSummary.cached} 个源已缓存', 4000);
-        if (!ref.read(appControllerProvider).playerOpen) {
-          ref.read(appControllerProvider.notifier).loadHome();
-        }
-      }
-    });
+    setState(_refreshLocalStats);
+    _ensureCatPollTimer(notifyWhenDone: true);
   }
 
   @override

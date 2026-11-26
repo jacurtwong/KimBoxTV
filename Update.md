@@ -5,6 +5,20 @@
 
 ---
 
+## v3.18.20
+- **版本**：`3.18.20`
+- **日期**：`2026-11-27`
+- **标题**：修复配置管理弹窗分类扫描状态不刷新、同步漏载基线及补齐第 21 站哈希基线
+- **背景**：初始化/导入配置后，因基线只收录了 20 个站点而第 21 个站点（`jyzyapi.com`）进入 3 秒错峰后台扫描；若在扫描期间打开「配置源管理」弹窗，`initState()` 只取了一次快照而未启动 `_catPollTimer` 轮询，导致后台早已扫完后弹窗仍一直停在 `扫描中 0/1`。同时 `syncConfig()` 同步后也未调用 `seedFromBaseline`。
+- **改动**：
+  - 在 `_ConfigManagerDialogState` 抽出共用 `_ensureCatPollTimer()`，弹窗打开或单条同步触发后台扫描时自动轮询并在完成后即时刷新分类统计与首页视图；
+  - `AppController.syncConfig` 在 `invalidateCatCache` 后补全 `seedFromBaseline` 调用；
+  - 将第 21 个站点的分类探测结果以 SHA-256 哈希形式补充写入 `assets/category-baseline.json`（依然零明文 URL / 站名）。
+- **验证**：验证 `assets/category-baseline.json` 含 21 条 SHA-256 哈希且无任何明文地址，`flutter analyze && flutter test` 全部通过后构建 Release 交付验收。
+- **已知边界 / 回滚方式**：若配置中后续出现新的第 22+ 个未收录站点，仍会在 3 秒错峰后后台现扫并在弹窗内实时刷新至完成；回退可直接还原本次提交。
+
+---
+
 ## v3.18.19
 - **版本**：`3.18.19`
 - **日期**：`2026-11-26`

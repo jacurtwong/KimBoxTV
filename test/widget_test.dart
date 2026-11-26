@@ -331,7 +331,7 @@ void main() {
       expect(baselineRaw.contains('https://'), false);
       final parsedBaseline = jsonDecode(baselineRaw) as Map<String, dynamic>;
       expect(parsedBaseline['version'], 2);
-      expect((parsedBaseline['hashes'] as Map).length, 20);
+      expect((parsedBaseline['hashes'] as Map).length, 21);
 
       final tmp = Directory.systemTemp.createTempSync('kimbox_cat_scan_test_');
       try {
