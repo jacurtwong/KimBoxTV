@@ -111,7 +111,7 @@ class AppUpdater {
   static const String _ua = 'KimBoxTV-Updater';
   static const int _checkIntervalMs = 15 * 60 * 1000;
 
-  static String currentVersion = '3.18.11';
+  static String currentVersion = '3.18.12';
   static bool _checking = false;
   static int _lastCheck = 0;
   static ReleaseInfo? _latest;

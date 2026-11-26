@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.11',
+    this.version = '3.18.12',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.11',
+      current: '3.18.12',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -1752,14 +1752,32 @@ class AppController extends StateNotifier<AppState> {
     }
   }
 
+  /// Resolves the best known playback position (> 1s) when reopening or saving
+  /// the active episode so transient 0s polls during reload never wipe progress.
+  static double resolveActivePlaybackPosition({
+    required double currentPos,
+    required double lastGoodPos,
+  }) {
+    if (currentPos > 1) return currentPos;
+    if (lastGoodPos > 1) return lastGoodPos;
+    return 0;
+  }
+
   void selectEpisode(int epIdx) {
     final detail = state.currentDetail;
     if (detail == null) return;
     final source = detail.playSources[state.currentSourceIdx];
     if (epIdx < 0 || epIdx >= source.episodes.length) return;
+    final isSameEpWhileOpen = state.playerOpen && epIdx == state.currentEpIdx;
+    final resumeAt = isSameEpWhileOpen
+        ? resolveActivePlaybackPosition(
+            currentPos: state.mpv.position,
+            lastGoodPos: _lastGoodPos,
+          )
+        : 0.0;
     saveHistory(force: true);
     state = state.copyWith(currentEpIdx: epIdx);
-    unawaited(playEpisode(source.episodes[epIdx].url, resumeAt: 0));
+    unawaited(playEpisode(source.episodes[epIdx].url, resumeAt: resumeAt));
   }
 
   void playPrevEpisode() {
@@ -2177,7 +2195,7 @@ class AppController extends StateNotifier<AppState> {
     var pos = state.mpv.position;
     if (pos > 1) {
       _lastGoodPos = pos;
-    } else if (_lastGoodPos > 30) {
+    } else if (_lastGoodPos > 1) {
       pos = _lastGoodPos;
     }
 
@@ -2580,12 +2598,44 @@ class AppController extends StateNotifier<AppState> {
     showToast('缓冲已设为 $secs 秒（重新打开该集生效）', 2500);
   }
 
-  void saveHwdecMode(String mode) {
+  Future<void> saveHwdecMode(String mode) async {
+    if (mode == state.hwdecMode) return;
     _prefs.setString('tvbox_hwdec', mode);
     state = state.copyWith(hwdecMode: mode);
-    unawaited(mpvService.setHwdecMode(mode));
     const labels = {'auto': '自动（优先硬解）', 'hw': '强制硬解', 'sw': '软解（CPU）'};
-    showToast('解码方式：${labels[mode] ?? mode}（重开当前集生效）', 3500);
+    final label = labels[mode] ?? mode;
+
+    final detail = state.currentDetail;
+    final source = (detail != null &&
+            state.currentSourceIdx >= 0 &&
+            state.currentSourceIdx < detail.playSources.length)
+        ? detail.playSources[state.currentSourceIdx]
+        : null;
+    final ep = (source != null &&
+            state.currentEpIdx >= 0 &&
+            state.currentEpIdx < source.episodes.length)
+        ? source.episodes[state.currentEpIdx]
+        : null;
+
+    if (state.playerOpen && ep != null) {
+      final resumePos = resolveActivePlaybackPosition(
+        currentPos: state.mpv.position,
+        lastGoodPos: _lastGoodPos,
+      );
+      saveHistory(force: true);
+      await mpvService.setHwdecMode(mode);
+      showToast(
+        resumePos > 1
+            ? '解码方式：$label（从 ${fmtTime(resumePos)} 重载当前集）'
+            : '解码方式：$label（正在重载当前集）',
+        3200,
+      );
+      await playEpisode(ep.url, resumeAt: resumePos);
+      return;
+    }
+
+    await mpvService.setHwdecMode(mode);
+    showToast('解码方式：$label', 2500);
   }
 
   void saveRenderRes(String res) {

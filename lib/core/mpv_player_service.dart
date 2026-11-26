@@ -346,10 +346,10 @@ class MpvPlayerService {
     await _applyNativeOpt('start', s > 0 ? '$s' : '0');
 
     _lastKnownDuration = 0;
-    _lastKnownPosition = 0;
+    _lastKnownPosition = s > 0 ? s.toDouble() : 0;
     _timeOffset = 0;
-    _lastRawPos = 0;
-    _selfSeekUntil = DateTime.now().add(const Duration(seconds: 3));
+    _lastRawPos = s > 0 ? s.toDouble() : 0;
+    _selfSeekUntil = DateTime.now().add(Duration(seconds: s > 0 ? 6 : 3));
     _playbackStarted = true;
 
     await player.open(

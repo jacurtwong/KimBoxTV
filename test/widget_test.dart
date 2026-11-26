@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kimbox_tv/core/app_controller.dart';
 import 'package:kimbox_tv/core/category_filter.dart';
 import 'package:kimbox_tv/core/config_parser.dart';
 import 'package:kimbox_tv/core/db/tvbox_db.dart';
@@ -229,6 +230,32 @@ void main() {
           tmp.deleteSync(recursive: true);
         } catch (_) {}
       }
+    });
+  });
+
+  group('AppController playback resume helper', () {
+    test('preserves playback position across decode reload and transient 0 polls', () {
+      expect(
+        AppController.resolveActivePlaybackPosition(
+          currentPos: 245.6,
+          lastGoodPos: 240.0,
+        ),
+        245.6,
+      );
+      expect(
+        AppController.resolveActivePlaybackPosition(
+          currentPos: 0,
+          lastGoodPos: 18.4,
+        ),
+        18.4,
+      );
+      expect(
+        AppController.resolveActivePlaybackPosition(
+          currentPos: 0.5,
+          lastGoodPos: 0,
+        ),
+        0,
+      );
     });
   });
 }
