@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_controller.dart';
 import '../core/models.dart';
@@ -92,6 +93,7 @@ class _HomeViewState extends ConsumerState<HomeView>
               Expanded(
                 child: CustomScrollView(
                   controller: _scrollCtrl,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(800),
                   slivers: [
                     if (st.videos.isEmpty)
                       SliverToBoxAdapter(
@@ -138,36 +140,38 @@ class _HomeViewState extends ConsumerState<HomeView>
                                 crossAxisSpacing: gap,
                                 childAspectRatio: ratio,
                               ),
-                              delegate: SliverChildBuilderDelegate(
-                                (ctx, idx) {
-                                  final v = st.videos[idx];
-                                  return _VideoCard(
-                                    item: v,
-                                    showDelete: isStatic,
-                                    onTap: () => ctrl.openDetail(
-                                      v.vodId,
-                                      siteKey: v.siteKey ?? st.activeSiteKey,
-                                      vodName: v.vodName,
-                                    ),
-                                    onToggleFav: () => ctrl.toggleCardFavorite(v),
-                                    onDelete: isStatic
-                                        ? () async {
-                                            final isFav =
-                                                st.listMode == ListMode.favorites;
-                                            final ok = await showKimConfirmDialog(
-                                              context,
-                                              title: isFav ? '删除收藏' : '删除历史记录',
-                                              message: isFav
-                                                  ? '确定删除收藏「${v.vodName}」？'
-                                                  : '确定删除「${v.vodName}」的播放记录？',
-                                            );
-                                            if (ok) ctrl.deleteStaticItem(v);
-                                          }
-                                        : null,
-                                  );
-                                },
-                                childCount: st.videos.length,
-                              ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (ctx, idx) {
+                                    final v = st.videos[idx];
+                                    return RepaintBoundary(
+                                      child: _VideoCard(
+                                        item: v,
+                                        showDelete: isStatic,
+                                        onTap: () => ctrl.openDetail(
+                                          v.vodId,
+                                          siteKey: v.siteKey ?? st.activeSiteKey,
+                                          vodName: v.vodName,
+                                        ),
+                                        onToggleFav: () => ctrl.toggleCardFavorite(v),
+                                        onDelete: isStatic
+                                            ? () async {
+                                                final isFav =
+                                                    st.listMode == ListMode.favorites;
+                                                final ok = await showKimConfirmDialog(
+                                                  context,
+                                                  title: isFav ? '删除收藏' : '删除历史记录',
+                                                  message: isFav
+                                                      ? '确定删除收藏「${v.vodName}」？'
+                                                      : '确定删除「${v.vodName}」的播放记录？',
+                                                );
+                                                if (ok) ctrl.deleteStaticItem(v);
+                                              }
+                                            : null,
+                                      ),
+                                    );
+                                  },
+                                  childCount: st.videos.length,
+                                ),
                             );
                           },
                         ),

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../core/local_http_server.dart';
 import '../theme.dart';
+import 'poster_image_provider.dart';
 
 enum KimButtonVariant { primary, secondary, ghost, cyan }
 
@@ -243,22 +243,28 @@ class KimDropdown<T> extends StatelessWidget {
 
 class PosterImage extends StatefulWidget {
   final String rawUrl;
+  final int cacheWidth;
 
-  const PosterImage({super.key, required this.rawUrl});
+  const PosterImage({
+    super.key,
+    required this.rawUrl,
+    this.cacheWidth = kPosterTargetWidth,
+  });
 
   @override
   State<PosterImage> createState() => _PosterImageState();
 }
 
 class _PosterImageState extends State<PosterImage> {
-  bool _useDirect = false;
+  bool _useRefererFallback = false;
   bool _failed = false;
 
   @override
   void didUpdateWidget(covariant PosterImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.rawUrl != widget.rawUrl) {
-      _useDirect = false;
+    if (oldWidget.rawUrl != widget.rawUrl ||
+        oldWidget.cacheWidth != widget.cacheWidth) {
+      _useRefererFallback = false;
       _failed = false;
     }
   }
@@ -266,32 +272,44 @@ class _PosterImageState extends State<PosterImage> {
   @override
   Widget build(BuildContext context) {
     if (_failed || widget.rawUrl.trim().isEmpty) {
-      return Container(color: const Color(0xFF222222));
+      return const ColoredBox(color: Color(0xFF222222));
     }
 
-    final proxy = LocalHttpServer.imageUrl(widget.rawUrl);
-    final direct = LocalHttpServer.splitUrlHeaders(widget.rawUrl).url;
-    final src = (_useDirect || proxy == null) ? direct : proxy;
-    if (!RegExp(r'^https?://', caseSensitive: false).hasMatch(src)) {
-      return Container(color: const Color(0xFF222222));
+    final provider = posterImageProvider(
+      widget.rawUrl,
+      targetWidth: widget.cacheWidth,
+      forceRefererFallback: _useRefererFallback,
+    );
+    if (provider == null) {
+      return const ColoredBox(color: Color(0xFF222222));
     }
 
-    return Image.network(
-      src,
+    final canFallbackWithReferer = !_useRefererFallback &&
+        provider is! DoubanPosterImage &&
+        provider is! SitePosterImage &&
+        provider is! MemoryImage &&
+        provider is! ResizeImage;
+    final canFallbackResize = !_useRefererFallback &&
+        provider is ResizeImage &&
+        provider.imageProvider is NetworkImage;
+
+    return Image(
+      image: provider,
       fit: BoxFit.cover,
       gaplessPlayback: true,
       filterQuality: FilterQuality.low,
       errorBuilder: (_, _, _) {
-        if (!_useDirect && proxy != null && direct != proxy) {
+        if (canFallbackWithReferer || canFallbackResize) {
+          PaintingBinding.instance.imageCache.evict(provider);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _useDirect = true);
+            if (mounted) setState(() => _useRefererFallback = true);
           });
         } else if (!_failed) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _failed = true);
           });
         }
-        return Container(color: const Color(0xFF222222));
+        return const ColoredBox(color: Color(0xFF222222));
       },
     );
   }

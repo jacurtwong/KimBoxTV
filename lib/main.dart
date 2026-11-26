@@ -19,6 +19,8 @@ import 'ui/widgets/common_widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PaintingBinding.instance.imageCache.maximumSize = 500;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 256 << 20;
   MediaKit.ensureInitialized();
 
   await AppPaths.init();
@@ -58,7 +60,7 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
-  var appVersion = '3.18.16';
+  var appVersion = '3.18.17';
   try {
     final pkg = await PackageInfo.fromPlatform();
     if (pkg.version.isNotEmpty) appVersion = pkg.version;

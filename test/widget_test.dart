@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kimbox_tv/core/app_controller.dart';
 import 'package:kimbox_tv/core/category_filter.dart';
@@ -9,6 +10,7 @@ import 'package:kimbox_tv/core/hls_ad_filter.dart';
 import 'package:kimbox_tv/core/models.dart';
 import 'package:kimbox_tv/core/mpv_player_service.dart';
 import 'package:kimbox_tv/core/paths.dart';
+import 'package:kimbox_tv/ui/widgets/poster_image_provider.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -260,6 +262,63 @@ void main() {
         ),
         0,
       );
+    });
+  });
+
+  group('PosterImageProvider routing and resize', () {
+    test('parses @Referer/@Headers/relay and routes providers correctly', () {
+      expect(posterImageProvider(''), isNull);
+      expect(posterImageProvider('not-a-url'), isNull);
+
+      final plain = posterImageProvider('https://cdn.example.com/a.jpg');
+      expect(plain, isA<ResizeImage>());
+      final resized = plain! as ResizeImage;
+      expect(resized.width, kPosterTargetWidth);
+      expect(resized.imageProvider, isA<NetworkImage>());
+
+      final plainFallback = posterImageProvider(
+        'https://cdn.example.com/a.jpg',
+        forceRefererFallback: true,
+      );
+      expect(plainFallback, isA<SitePosterImage>());
+      final fallbackSite = plainFallback! as SitePosterImage;
+      expect(fallbackSite.retryWithoutReferer, true);
+      expect(fallbackSite.source.headers['Referer'], 'https://cdn.example.com/');
+
+      final douban = posterImageProvider(
+        'https://img1.doubanio.com/view/photo/s_ratio_poster/public/p1.jpg',
+      );
+      expect(douban, isA<DoubanPosterImage>());
+      expect(
+        DoubanPosterImage.candidateUrls(
+          'https://img1.doubanio.com/view/photo/s_ratio_poster/public/p1.jpg',
+        ),
+        [
+          'https://img1.doubanio.com/view/photo/s_ratio_poster/public/p1.webp',
+          'https://img1.doubanio.com/view/photo/s_ratio_poster/public/p1.jpg',
+        ],
+      );
+
+      final withHeaders = posterImageProvider(
+        'https://img.site.com/p.jpg@Referer=https://site.com/@Headers={"ua":"CustomUA"}',
+      );
+      expect(withHeaders, isA<SitePosterImage>());
+      final siteSrc = (withHeaders! as SitePosterImage).source;
+      expect(siteSrc.url, 'https://img.site.com/p.jpg');
+      expect(siteSrc.headers['Referer'], 'https://site.com/');
+      expect(siteSrc.headers['User-Agent'], 'CustomUA');
+
+      final relay = PosterSource.parse(
+        'https://proxy.site.com/img.php?url=https%3A%2F%2Fimg2.doubanio.com%2Fp2.jpg',
+      );
+      expect(relay.fallbackUrl, 'https://img2.doubanio.com/p2.jpg');
+
+      final scaled = scalePosterTargetSize(1024, 1536, 512);
+      expect(scaled.width, 512);
+      expect(scaled.height, 768);
+      final unscaled = scalePosterTargetSize(300, 450, 512);
+      expect(unscaled.width, 300);
+      expect(unscaled.height, 450);
     });
   });
 }
