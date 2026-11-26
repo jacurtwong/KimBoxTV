@@ -273,6 +273,7 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
       _ensureCatPollTimer();
     }
     Future.microtask(() {
+      if (!mounted) return;
       ref.read(appControllerProvider.notifier).refreshUpdateStatus(force: false);
     });
   }
@@ -375,7 +376,7 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
         title: '全量重扫',
         message: '将重新扫描全部直连源的分类（可能耗时几分钟，期间可继续使用）。继续？',
       );
-      if (!ok) return;
+      if (!ok || !mounted) return;
     }
     ref.read(appControllerProvider.notifier).startCatScan(mode);
     ref.read(appControllerProvider.notifier).showToast(
@@ -1101,7 +1102,7 @@ class _BackupDialogState extends ConsumerState<_BackupDialog> {
                                 title: '删除备份',
                                 message: '确定删除这个备份吗？此操作不可恢复。\n\n${b.name}',
                               );
-                              if (!ok) return;
+                              if (!ok || !mounted) return;
                               TvboxDb.deleteBackup(b.name);
                               setState(_reload);
                             },

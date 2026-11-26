@@ -110,9 +110,11 @@ class LocalHttpServer {
     final out = <String, String>{'User-Agent': desktopUa};
     if (extra == null) return out;
     extra.forEach((k, v) {
-      if (_headerAllow.contains(k.toLowerCase())) {
+      final lower = k.toLowerCase();
+      if (_headerAllow.contains(lower)) {
         final clean = v.replaceAll(RegExp(r'[\r\n]'), ' ');
         if (clean.isNotEmpty) {
+          out.removeWhere((ek, _) => ek.toLowerCase() == lower);
           out[k] = clean.length > 2048 ? clean.substring(0, 2048) : clean;
         }
       }
@@ -144,6 +146,7 @@ class LocalHttpServer {
     final range = req.headers.value('range');
     if (range != null) headers['Range'] = range;
 
+    var headersSent = false;
     try {
       final resp = await _dio.get<ResponseBody>(
         target,
@@ -154,7 +157,16 @@ class LocalHttpServer {
           headers: headers,
         ),
       );
-      req.response.statusCode = resp.statusCode == 206 ? 206 : 200;
+      final status = resp.statusCode ?? 502;
+      if (status < 200 || status >= 400) {
+        try {
+          await resp.data?.stream.drain<void>();
+        } catch (_) {}
+        req.response.statusCode = status;
+        await req.response.close();
+        return;
+      }
+      req.response.statusCode = status == 206 ? 206 : 200;
       for (final k in const [
         'content-type',
         'content-length',
@@ -165,6 +177,7 @@ class LocalHttpServer {
         final v = resp.headers.value(k);
         if (v != null) req.response.headers.set(k, v);
       }
+      headersSent = true;
       final stream = resp.data?.stream;
       if (stream != null) {
         await for (final chunk in stream) {
@@ -173,9 +186,13 @@ class LocalHttpServer {
       }
       await req.response.close();
     } catch (_) {
-      req.response.statusCode = 502;
-      req.response.write('segment fetch failed');
-      await req.response.close();
+      if (!headersSent) {
+        req.response.statusCode = 502;
+        req.response.write('segment fetch failed');
+      }
+      try {
+        await req.response.close();
+      } catch (_) {}
     }
   }
 

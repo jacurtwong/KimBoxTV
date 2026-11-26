@@ -71,6 +71,8 @@ class JvmBridge {
   static String _lastError = '';
   static final List<DateTime> _restarts = [];
   static Timer? _idleTimer;
+  static Timer? _readyTimer;
+  static Timer? _crashRestartTimer;
   static bool _enabled = true;
 
   static final Dio _dio = Dio(
@@ -185,6 +187,7 @@ class JvmBridge {
 
       var outBuf = '';
       var done = false;
+      _readyTimer?.cancel();
       final timer = Timer(_readyTimeout, () {
         if (done) return;
         done = true;
@@ -197,25 +200,30 @@ class JvmBridge {
           completer.completeError(JvmException(_lastError));
         }
       });
+      _readyTimer = timer;
 
       proc.stdout
           .transform(const Utf8Decoder(allowMalformed: true))
           .listen((s) {
-        outBuf += s;
         if (s.trim().isNotEmpty) log('[java] ${s.trim()}');
-        final m = RegExp(r'\[COMPANION_READY\] PORT=(\d+)').firstMatch(outBuf);
-        if (m != null && !done) {
-          done = true;
-          timer.cancel();
-          _port = int.parse(m.group(1)!);
-          _startedAt = DateTime.now();
-          _coldStartMs =
-              DateTime.now().difference(t0).inMilliseconds;
-          _lastError = '';
-          _starting = null;
-          _touchIdle();
-          log('[ready] port=$_port coldStart=${_coldStartMs}ms');
-          if (!completer.isCompleted) completer.complete(_port);
+        if (!done) {
+          outBuf += s;
+          final m = RegExp(r'\[COMPANION_READY\] PORT=(\d+)').firstMatch(outBuf);
+          if (m != null) {
+            done = true;
+            timer.cancel();
+            outBuf = '';
+            _port = int.parse(m.group(1)!);
+            _startedAt = DateTime.now();
+            _coldStartMs = DateTime.now().difference(t0).inMilliseconds;
+            _lastError = '';
+            _starting = null;
+            _touchIdle();
+            log('[ready] port=$_port coldStart=${_coldStartMs}ms');
+            if (!completer.isCompleted) completer.complete(_port);
+          } else if (outBuf.length > 64 * 1024) {
+            outBuf = outBuf.substring(outBuf.length - 4096);
+          }
         }
       }, onError: (_) {});
 
@@ -226,14 +234,18 @@ class JvmBridge {
       }, onError: (_) {});
 
       proc.exitCode.then((code) {
-        final wasRunning = _port > 0;
-        _proc = null;
-        _port = 0;
+        final isCurrent = (_proc == proc);
+        final wasRunning = isCurrent && _port > 0;
+        if (isCurrent) {
+          _proc = null;
+          _port = 0;
+        }
         if (!done) {
           done = true;
           timer.cancel();
           _starting = null;
-          _lastError = '服务启动失败（code=$code）';
+          _lastError = _stopping ? '服务已停止' : '服务启动失败（code=$code）';
+          if (isCurrent) _stopping = false;
           if (!completer.isCompleted) {
             completer.completeError(JvmException(_lastError));
           }
@@ -246,8 +258,10 @@ class JvmBridge {
           _restarts.removeWhere((t) => now.difference(t) >= _restartWindow);
           if (_restarts.length < _maxRestarts) {
             _restarts.add(now);
-            Timer(Duration(milliseconds: 1500 * _restarts.length), () {
-              if (_enabled && _proc == null) {
+            _crashRestartTimer?.cancel();
+            _crashRestartTimer =
+                Timer(Duration(milliseconds: 1500 * _restarts.length), () {
+              if (_enabled && _proc == null && !_stopping) {
                 ensureStarted().catchError((_) => 0);
               }
             });
@@ -255,7 +269,7 @@ class JvmBridge {
             _lastError = 'JVM 反复崩溃，已停止自动重启';
           }
         }
-        _stopping = false;
+        if (isCurrent) _stopping = false;
       });
     } catch (e) {
       _lastError = e.toString();
@@ -271,9 +285,15 @@ class JvmBridge {
   static void stop() {
     _idleTimer?.cancel();
     _idleTimer = null;
+    _readyTimer?.cancel();
+    _readyTimer = null;
+    _crashRestartTimer?.cancel();
+    _crashRestartTimer = null;
+    _starting = null;
     final p0 = _proc;
     if (p0 == null) {
       _port = 0;
+      _stopping = false;
       return;
     }
     _stopping = true;
@@ -292,10 +312,10 @@ class JvmBridge {
     Map<String, dynamic> body, {
     int timeoutMs = 75000,
   }) async {
-    await ensureStarted();
+    final port = await ensureStarted();
     _touchIdle();
     final resp = await _dio.post<dynamic>(
-      'http://127.0.0.1:$_port$pathname',
+      'http://127.0.0.1:$port$pathname',
       data: body,
       options: Options(
         receiveTimeout: Duration(milliseconds: timeoutMs),

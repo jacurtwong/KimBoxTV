@@ -111,7 +111,7 @@ class AppUpdater {
   static const String _ua = 'KimBoxTV-Updater';
   static const int _checkIntervalMs = 15 * 60 * 1000;
 
-  static String currentVersion = '3.18.21';
+  static String currentVersion = '3.18.22';
   static bool _checking = false;
   static int _lastCheck = 0;
   static ReleaseInfo? _latest;
@@ -383,7 +383,7 @@ class AppUpdater {
 
     final partPath = '$target.part';
     try {
-      await _dio.download(
+      final resp = await _dio.download(
         asset.url,
         partPath,
         onReceiveProgress: (rec, total) {
@@ -393,6 +393,10 @@ class AppUpdater {
           }
         },
       );
+      final code = resp.statusCode ?? 0;
+      if (code < 200 || code >= 300) {
+        throw Exception('下载失败（HTTP $code）');
+      }
       final size = File(partPath).lengthSync();
       if (asset.size > 0 && (size - asset.size).abs() > 1024 * 64) {
         throw Exception('下载不完整（$size/${asset.size} 字节）');

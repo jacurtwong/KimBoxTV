@@ -5,20 +5,20 @@ import 'package:path/path.dart' as p;
 class AppPaths {
   AppPaths._();
 
-  static late final String appRoot;
-  static late final String dataDir;
-  static late final String cacheDir;
-  static late final String backupsDir;
-  static late final String updatesDir;
-  static late final String jvmDataDir;
-  static late final String jvmHomeDir;
-  static late final String jvmLogFile;
-  static late final String dbPath;
-  static late final String logFile;
-  static late final String bossKeyFile;
-  static late final String windowStateFile;
-  static late final String settingsFile;
-  static late final String categoryFilterFile;
+  static late String appRoot;
+  static late String dataDir;
+  static late String cacheDir;
+  static late String backupsDir;
+  static late String updatesDir;
+  static late String jvmDataDir;
+  static late String jvmHomeDir;
+  static late String jvmLogFile;
+  static late String dbPath;
+  static late String logFile;
+  static late String bossKeyFile;
+  static late String windowStateFile;
+  static late String settingsFile;
+  static late String categoryFilterFile;
   static String? jvmDir;
   static String? jreExe;
 

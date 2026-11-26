@@ -60,7 +60,7 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
-  var appVersion = '3.18.21';
+  var appVersion = '3.18.22';
   try {
     final pkg = await PackageInfo.fromPlatform();
     if (pkg.version.isNotEmpty) appVersion = pkg.version;
@@ -88,6 +88,7 @@ class _KimBoxAppState extends ConsumerState<KimBoxApp> with WindowListener {
     super.initState();
     windowManager.addListener(this);
     Future.microtask(() async {
+      if (!mounted) return;
       await ref.read(appControllerProvider.notifier).init(widget.appVersion);
       await WindowStateService.saveNow();
     });
@@ -113,9 +114,12 @@ class _KimBoxAppState extends ConsumerState<KimBoxApp> with WindowListener {
 
   @override
   void onWindowClose() async {
+    final ctrl = mounted ? ref.read(appControllerProvider.notifier) : null;
+    ctrl?.saveHistory(force: true);
     await WindowStateService.saveNow();
-    ref.read(appControllerProvider.notifier).saveHistory(force: true);
-    await ref.read(appControllerProvider.notifier).mpvService.dispose();
+    if (ctrl != null) {
+      await ctrl.mpvService.dispose();
+    }
     JvmBridge.stop();
     await LocalHttpServer.stop();
     TvboxDb.close();

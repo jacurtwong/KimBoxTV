@@ -162,6 +162,7 @@ class KimDropdown<T> extends StatelessWidget {
         (items.isNotEmpty ? items.first.label : emptyText);
 
     final box = PopupMenuButton<T>(
+      enabled: onChanged != null,
       tooltip: '',
       color: KimTheme.cardBg,
       surfaceTintColor: Colors.transparent,

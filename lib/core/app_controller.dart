@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.21',
+    this.version = '3.18.22',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.21',
+      current: '3.18.22',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -342,6 +342,7 @@ class AppController extends StateNotifier<AppState> {
   Timer? _tailSkipTimer;
   Timer? _catScanWatcher;
   Timer? _periodicUpdateTimer;
+  Timer? _updDownloadTimer;
   Timer? _jvmPollTimer;
 
   @override
@@ -352,13 +353,17 @@ class AppController extends StateNotifier<AppState> {
     _tailSkipTimer?.cancel();
     _catScanWatcher?.cancel();
     _periodicUpdateTimer?.cancel();
+    _updDownloadTimer?.cancel();
     _jvmPollTimer?.cancel();
     super.dispose();
   }
 
   int _playToken = 0;
+  int _detailSeq = 0;
+  int _homeSeq = 0;
   int _allSourcesSeq = 0;
   int _searchSeq = 0;
+  bool _pollingMpv = false;
   int? _pendingEpIdx;
   double? _pendingPos;
   String? _homeSiteKey;
@@ -634,20 +639,26 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> _applyConfig(ConfigRecord row) async {
+    final oldSpider = state.spiderJar;
+    final cached = _loadConfigCache(row.id);
+    final hasCached = cached != null && cached.sites.isNotEmpty;
     state = state.copyWith(
       currentConfigId: row.id,
       currentConfigUrl: row.url,
       defaultSiteKey: row.defaultSite,
-      configLoading: true,
+      configLoading: !hasCached,
       clearConfigLoadError: true,
       configs: TvboxDb.listConfigs(),
+      sites: hasCached ? state.sites : const [],
+      spiderJar: hasCached ? state.spiderJar : '',
+      activeSiteKey: hasCached ? state.activeSiteKey : '',
+      categories: hasCached ? state.categories : const [],
+      videos: hasCached ? state.videos : const [],
     );
-    if (state.spiderJar.isNotEmpty) {
-      unawaited(JvmBridge.resetAll().catchError((_) => false));
+    if (oldSpider.isNotEmpty) {
+      await JvmBridge.resetAll().catchError((_) => false);
     }
-
-    final cached = _loadConfigCache(row.id);
-    if (cached != null && cached.sites.isNotEmpty) {
+    if (hasCached) {
       final picked = _pickDefaultSite(cached.sites, row.defaultSite);
       state = state.copyWith(
         sites: cached.sites,
@@ -1053,6 +1064,7 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> loadHome() async {
+    final myHomeSeq = ++_homeSeq;
     final site = state.activeSite;
     if (site == null) {
       state = state.copyWith(
@@ -1076,7 +1088,11 @@ class AppController extends StateNotifier<AppState> {
       final home = site.isDexSpider
           ? await SpiderEngine.home(site, state.spiderJar)
           : await CmsEngine.getHome(site);
-      if (siteAtStart != state.activeSiteKey) return;
+      if (myHomeSeq != _homeSeq ||
+          siteAtStart != state.activeSiteKey ||
+          state.listMode != ListMode.category) {
+        return;
+      }
 
       _homeSiteKey = siteAtStart;
       final classesRaw = home.classes
@@ -1241,6 +1257,9 @@ class AppController extends StateNotifier<AppState> {
             _formatFooter(ListMode.category, tid, next, pc, state.totalCount),
       );
     } catch (e) {
+      if (siteAtStart != state.activeSiteKey || state.activeCategoryId != tid) {
+        return;
+      }
       state = state.copyWith(
         listLoading: false,
         footerText: '加载失败: $e',
@@ -1378,10 +1397,12 @@ class AppController extends StateNotifier<AppState> {
     var cmsCursor = 0;
     Future<void> cmsWorker() async {
       while (cmsCursor < cmsSites.length) {
+        if (mySeq != _searchSeq) return;
         final site = cmsSites[cmsCursor++];
         try {
           final r = await CmsEngine.search(site, wd, 1)
               .timeout(const Duration(seconds: 9));
+          if (mySeq != _searchSeq) return;
           for (final v in r) {
             collected.add(v.copyWith(siteKey: site.key, siteName: site.name));
           }
@@ -1395,10 +1416,12 @@ class AppController extends StateNotifier<AppState> {
     var spiderCursor = 0;
     Future<void> spiderWorker() async {
       while (spiderCursor < spiderSites.length) {
+        if (mySeq != _searchSeq) return;
         final site = spiderSites[spiderCursor++];
         try {
           final r = await SpiderEngine.search(site, wd, 1, state.spiderJar)
               .timeout(const Duration(seconds: 45));
+          if (mySeq != _searchSeq) return;
           for (final v in r) {
             collected.add(v.copyWith(siteKey: site.key, siteName: site.name));
           }
@@ -1588,6 +1611,26 @@ class AppController extends StateNotifier<AppState> {
 
   /* ==================== 播放页与详情 ==================== */
 
+  ({PlaySource source, Episode episode})? _activePlayItem(
+    VideoDetail? detail,
+    int sourceIdx,
+    int epIdx,
+  ) {
+    if (detail == null ||
+        detail.playSources.isEmpty ||
+        sourceIdx < 0 ||
+        sourceIdx >= detail.playSources.length) {
+      return null;
+    }
+    final source = detail.playSources[sourceIdx];
+    if (source.episodes.isEmpty ||
+        epIdx < 0 ||
+        epIdx >= source.episodes.length) {
+      return null;
+    }
+    return (source: source, episode: source.episodes[epIdx]);
+  }
+
   Future<void> openDetail(
     String id, {
     String? siteKey,
@@ -1595,6 +1638,11 @@ class AppController extends StateNotifier<AppState> {
     double? targetPos,
     String vodName = '',
   }) async {
+    final myDetailSeq = ++_detailSeq;
+    _playToken++;
+    _stopMpvPolling();
+    unawaited(mpvService.stop());
+
     _pendingEpIdx = targetEpIdx;
     _pendingPos = (targetPos != null && targetPos > 0) ? targetPos : null;
     mpvService.ensureInitialized();
@@ -1628,6 +1676,7 @@ class AppController extends StateNotifier<AppState> {
         } catch (_) {
           detail = null;
         }
+        if (myDetailSeq != _detailSeq || !state.playerOpen) return;
         if (detail == null && vodName.trim().isNotEmpty) {
           try {
             detail = await SpiderEngine.resolveByTitle(
@@ -1637,6 +1686,7 @@ class AppController extends StateNotifier<AppState> {
       } else {
         detail = await CmsEngine.getDetail(target, id);
       }
+      if (myDetailSeq != _detailSeq || !state.playerOpen) return;
 
       if (detail == null) {
         _pendingEpIdx = null;
@@ -1699,6 +1749,7 @@ class AppController extends StateNotifier<AppState> {
       _selectSourceAndPlay(sourceIdx, isManualSwitch: false, targetPos: null);
       unawaited(loadAllSources(fullDetail.vodName, key));
     } catch (e) {
+      if (myDetailSeq != _detailSeq) return;
       _pendingEpIdx = null;
       _pendingPos = null;
       showToast('加载影片详情出错: $e', 3000);
@@ -1718,7 +1769,12 @@ class AppController extends StateNotifier<AppState> {
     double? targetPos,
   }) {
     final detail = state.currentDetail;
-    if (detail == null || detail.playSources.isEmpty) return;
+    if (detail == null ||
+        detail.playSources.isEmpty ||
+        sourceIdx < 0 ||
+        sourceIdx >= detail.playSources.length) {
+      return;
+    }
     final source = detail.playSources[sourceIdx];
     if (source.episodes.isEmpty) return;
 
@@ -1768,9 +1824,9 @@ class AppController extends StateNotifier<AppState> {
 
   void selectEpisode(int epIdx) {
     final detail = state.currentDetail;
-    if (detail == null) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    if (epIdx < 0 || epIdx >= source.episodes.length) return;
+    final cur = _activePlayItem(detail, state.currentSourceIdx, epIdx);
+    if (cur == null) return;
+    final source = cur.source;
     final isSameEpWhileOpen = state.playerOpen && epIdx == state.currentEpIdx;
     final resumeAt = isSameEpWhileOpen
         ? resolveActivePlaybackPosition(
@@ -1793,9 +1849,10 @@ class AppController extends StateNotifier<AppState> {
 
   void playNextEpisode() {
     final detail = state.currentDetail;
-    if (detail == null) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    if (state.currentEpIdx >= source.episodes.length - 1) {
+    final cur =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx);
+    if (cur == null) return;
+    if (state.currentEpIdx >= cur.source.episodes.length - 1) {
       showToast('已经是最后一集', 1800);
       return;
     }
@@ -1835,8 +1892,14 @@ class AppController extends StateNotifier<AppState> {
     var fromSpider = spiderDirect;
 
     final detail = state.currentDetail;
-    if (detail != null && detail.spider && url.isNotEmpty && !_directMediaRe.hasMatch(url)) {
-      final src = detail.playSources[state.currentSourceIdx];
+    final activeForSpider =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx);
+    if (detail != null &&
+        detail.spider &&
+        activeForSpider != null &&
+        url.isNotEmpty &&
+        !_directMediaRe.hasMatch(url)) {
+      final src = activeForSpider.source;
       final flag = src.flag.isNotEmpty ? src.flag : src.sourceName;
       final site = state.sites.where((s) => s.key == detail.siteKey).firstOrNull;
       if (site != null) {
@@ -1863,6 +1926,7 @@ class AppController extends StateNotifier<AppState> {
             } catch (_) {}
           }
         } catch (e) {
+          if (myToken != _playToken) return;
           showToast('站源起播失败：$e（可换源，或看 data/jvm/service.log）', 7000);
           return;
         }
@@ -1988,9 +2052,11 @@ class AppController extends StateNotifier<AppState> {
       }
     }
 
-    final epTitle = detail != null
-        ? detail.playSources[state.currentSourceIdx].episodes[state.currentEpIdx].title
-        : '';
+    final epTitle =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx)
+                ?.episode
+                .title ??
+            '';
     final dbg = AdDebugSnapshot(
       title: '${detail?.vodName ?? ''} $epTitle'.trim(),
       url: finalUrl,
@@ -2017,36 +2083,59 @@ class AppController extends StateNotifier<AppState> {
         hwdecMode: state.hwdecMode,
         renderResMode: state.renderResMode,
       );
+      if (myToken != _playToken || !state.playerOpen) return;
       _startMpvPolling();
-      Future.delayed(const Duration(milliseconds: 1500), _refreshMpvMetaOnce);
-      Future.delayed(const Duration(seconds: 3), refreshTracks);
-      Future.delayed(const Duration(seconds: 8), refreshTracks);
-      unawaited(_probeAndWarn(finalUrl));
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (myToken == _playToken && state.playerOpen) {
+          unawaited(_refreshMpvMetaOnce());
+        }
+      });
+      Future.delayed(const Duration(seconds: 3), () {
+        if (myToken == _playToken && state.playerOpen) {
+          unawaited(refreshTracks());
+        }
+      });
+      Future.delayed(const Duration(seconds: 8), () {
+        if (myToken == _playToken && state.playerOpen) {
+          unawaited(refreshTracks());
+        }
+      });
+      unawaited(_probeAndWarn(finalUrl, myToken));
     } catch (e) {
-      showToast('mpv 启动失败：$e', 5000);
+      if (myToken == _playToken) {
+        showToast('mpv 启动失败：$e', 5000);
+      }
     }
   }
 
-  Future<void> _probeAndWarn(String url) async {
+  Future<void> _probeAndWarn(String url, int myToken) async {
     if (!url.contains('.m3u8')) return;
     final p = await LocalHttpServer.probePlaylist(url, headers: _mediaHeaders);
+    if (myToken != _playToken || !state.playerOpen) return;
     state = state.copyWith(lastProbe: p);
   }
 
   void _startMpvPolling() {
     _mpvPollTimer?.cancel();
+    _pollingMpv = false;
     _mpvPollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (!state.playerOpen) return;
-      final snap = await mpvService.pollState();
-      if (snap.position > 5) _sawProgress = true;
-      state = state.copyWith(mpv: snap);
+      if (!state.playerOpen || _pollingMpv) return;
+      _pollingMpv = true;
+      try {
+        final snap = await mpvService.pollState();
+        if (!state.playerOpen) return;
+        if (snap.position > 5) _sawProgress = true;
+        state = state.copyWith(mpv: snap);
 
-      if (!_eofHandled) {
-        if (_maybeSkipAd(snap.position)) return;
+        if (!_eofHandled) {
+          if (_maybeSkipAd(snap.position)) return;
+        }
+        _updateAdHitDebug(snap.position);
+        _maybeAutoNext(snap);
+        saveHistory(force: false);
+      } finally {
+        _pollingMpv = false;
       }
-      _updateAdHitDebug(snap.position);
-      _maybeAutoNext(snap);
-      saveHistory(force: false);
     });
   }
 
@@ -2159,9 +2248,10 @@ class AppController extends StateNotifier<AppState> {
     if (!endedByOutro && !endedByMpv) return;
 
     final detail = state.currentDetail;
-    if (detail == null) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    if (source.episodes.isEmpty) return;
+    final cur =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx);
+    if (cur == null) return;
+    final source = cur.source;
 
     saveHistory(force: true);
     _eofHandled = true;
@@ -2172,10 +2262,11 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
     final ep = source.episodes[next];
+    final tokenBefore = _playToken;
     state = state.copyWith(currentEpIdx: next);
     showToast('即将播放：${ep.title}', 2600);
     Future.delayed(const Duration(milliseconds: 800), () {
-      if (state.playerOpen) {
+      if (state.playerOpen && _playToken == tokenBefore) {
         unawaited(playEpisode(ep.url, resumeAt: 0));
       }
     });
@@ -2183,11 +2274,11 @@ class AppController extends StateNotifier<AppState> {
 
   void saveHistory({bool force = false}) {
     final detail = state.currentDetail;
-    if (detail == null) return;
-    if (detail.playSources.isEmpty) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    if (state.currentEpIdx >= source.episodes.length) return;
-    final ep = source.episodes[state.currentEpIdx];
+    final cur =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx);
+    if (detail == null || cur == null) return;
+    final source = cur.source;
+    final ep = cur.episode;
 
     final now = DateTime.now();
     if (!force && now.difference(_lastHistorySave) < const Duration(seconds: 8)) {
@@ -2244,6 +2335,7 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> closePlayer() async {
     saveHistory(force: true);
+    _detailSeq++;
     _playToken++;
     _tailSkipTimer?.cancel();
     _stopMpvPolling();
@@ -2305,10 +2397,10 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> reloadCurrentEpisode() async {
-    final detail = state.currentDetail;
-    if (detail == null) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    final ep = source.episodes[state.currentEpIdx];
+    final cur = _activePlayItem(
+        state.currentDetail, state.currentSourceIdx, state.currentEpIdx);
+    if (cur == null) return;
+    final ep = cur.episode;
     final at = state.mpv.position > 0 ? state.mpv.position : 0.0;
     showToast(
       at > 1 ? '正在从 ${fmtTime(at)} 重新加载…' : '正在重新加载当前集…',
@@ -2416,7 +2508,8 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> loadAllSources(String name, String currentSiteKey) async {
     final mySeq = ++_allSourcesSeq;
-    final cacheKey = normName(name);
+    final cfgAtStart = state.currentConfigId ?? 0;
+    final cacheKey = '$cfgAtStart|${normName(name)}';
     final hit = _sourceCache[cacheKey];
     if (hit != null &&
         DateTime.now().difference(hit.at) < const Duration(minutes: 5)) {
@@ -2449,6 +2542,7 @@ class AppController extends StateNotifier<AppState> {
 
     Future<void> worker() async {
       while (cursor < sites.length) {
+        if (mySeq != _allSourcesSeq) return;
         final site = sites[cursor++];
         final t0 = DateTime.now();
         try {
@@ -2457,6 +2551,7 @@ class AppController extends StateNotifier<AppState> {
                   .timeout(const Duration(seconds: 45))
               : await CmsEngine.search(site, name, 1)
                   .timeout(const Duration(seconds: 9));
+          if (mySeq != _allSourcesSeq) return;
           final match = candidates
                   .where((v) => normName(v.vodName) == target)
                   .firstOrNull ??
@@ -2684,9 +2779,10 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> playWithExternalPlayer() async {
     final detail = state.currentDetail;
-    if (detail == null || detail.playSources.isEmpty) return;
-    final source = detail.playSources[state.currentSourceIdx];
-    final ep = source.episodes[state.currentEpIdx];
+    final cur =
+        _activePlayItem(detail, state.currentSourceIdx, state.currentEpIdx);
+    if (detail == null || cur == null) return;
+    final ep = cur.episode;
     final curPos = state.mpv.position;
 
     if (state.isFullscreen) {
@@ -2742,7 +2838,7 @@ class AppController extends StateNotifier<AppState> {
     final badge = s.hasUpdate &&
         s.downloaded == null &&
         !s.downloading &&
-        (s.latest?.version != seen || s.hasUpdate);
+        s.latest?.version != seen;
     state = state.copyWith(updateStatus: s, hasUpdateBadge: badge);
   }
 
@@ -2767,15 +2863,20 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> startUpdateDownload() async {
     showToast('开始下载新版本…', 3000);
-    unawaited(AppUpdater.download().then((s) {
-      _syncUpdateBadge(s);
-      if (s.error.isNotEmpty) {
-        showToast('下载失败：${s.error}', 6000);
-      } else if (s.downloaded != null) {
-        showToast('新版本下载完成', 3500);
-      }
-    }));
-    Timer.periodic(const Duration(milliseconds: 500), (t) {
+    unawaited(
+      AppUpdater.download().then((s) {
+        _syncUpdateBadge(s);
+        if (s.error.isNotEmpty) {
+          showToast('下载失败：${s.error}', 6000);
+        } else if (s.downloaded != null) {
+          showToast('新版本下载完成', 3500);
+        }
+      }).catchError((Object e) {
+        showToast('下载失败：$e', 6000);
+      }),
+    );
+    _updDownloadTimer?.cancel();
+    _updDownloadTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
       final s = AppUpdater.status();
       state = state.copyWith(updateStatus: s);
       if (!s.downloading) t.cancel();

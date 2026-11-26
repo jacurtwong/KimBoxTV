@@ -369,13 +369,9 @@ class MpvPlayerService {
     if (!_initialized) return;
     final target = seconds < 0 ? 0.0 : seconds;
     _timeOffset = 0;
-    _selfSeekUntil = DateTime.now().add(const Duration(seconds: 5));
+    _selfSeekUntil = DateTime.now().add(const Duration(seconds: 6));
     _lastRawPos = target;
-    if (_lastKnownDuration > 0 &&
-        target >= _lastKnownDuration - 3 &&
-        target > _lastKnownPosition) {
-      _lastKnownPosition = target;
-    }
+    _lastKnownPosition = target;
     await player.seek(Duration(milliseconds: (target * 1000).round()));
   }
 
@@ -473,19 +469,29 @@ class MpvPlayerService {
       );
     }
 
-    // 检测时间轴跳变（跨过 HLS DISCONTINUITY 后 time-pos 回零）
-    if ((rawVal - _lastRawPos).abs() > 15 &&
-        _lastRawPos > 0 &&
-        DateTime.now().isAfter(_selfSeekUntil)) {
+    final inSelfSeek = DateTime.now().isBefore(_selfSeekUntil);
+    // 检测时间轴跳变（跨过 HLS DISCONTINUITY 后 time-pos 回零），用户主动 seek 窗口内不触发跳变补偿
+    if (!inSelfSeek &&
+        (rawVal - _lastRawPos).abs() > 15 &&
+        _lastRawPos > 0) {
       final lastAbs = _lastRawPos + _timeOffset;
       _timeOffset = lastAbs - rawVal;
     }
-    _lastRawPos = rawVal;
-    var posNow = (rawVal + _timeOffset).clamp(0.0, double.infinity);
-    if (_lastKnownDuration > 0 && posNow > _lastKnownDuration && !eofNow) {
-      posNow = _lastKnownDuration;
+    if (!inSelfSeek || (rawVal - _lastRawPos).abs() <= 5) {
+      _lastRawPos = rawVal;
     }
-    if (posNow > _lastKnownPosition) _lastKnownPosition = posNow;
+    final posNow = (inSelfSeek && (rawVal - _lastRawPos).abs() > 5)
+        ? _lastRawPos
+        : () {
+            var p = (rawVal + _timeOffset).clamp(0.0, double.infinity);
+            if (_lastKnownDuration > 0 && p > _lastKnownDuration && !eofNow) {
+              p = _lastKnownDuration;
+            }
+            return p;
+          }();
+    if (posNow > 0 || !inSelfSeek) {
+      _lastKnownPosition = posNow;
+    }
 
     final nearEnd = _lastKnownDuration > 0 &&
         _lastKnownPosition >= _lastKnownDuration - 30;
@@ -623,6 +629,7 @@ class MpvPlayerService {
 
   Future<void> dispose() async {
     if (!_initialized) return;
+    _initialized = false;
     _renderSizeTimer?.cancel();
     _renderSizeTimer = null;
     await _videoParamsSub?.cancel();

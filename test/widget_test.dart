@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kimbox_tv/core/app_controller.dart';
+import 'package:kimbox_tv/core/cache_cleaner.dart';
 import 'package:kimbox_tv/core/category_filter.dart';
 import 'package:kimbox_tv/core/config_parser.dart';
 import 'package:kimbox_tv/core/db/tvbox_db.dart';
 import 'package:kimbox_tv/core/hls_ad_filter.dart';
+import 'package:kimbox_tv/core/local_http_server.dart';
 import 'package:kimbox_tv/core/models.dart';
 import 'package:kimbox_tv/core/mpv_player_service.dart';
 import 'package:kimbox_tv/core/paths.dart';
@@ -425,6 +427,75 @@ void main() {
           ..load(customFilePath: settingsPath, legacyAppDataRoot: appDataRoot);
         expect(reloaded.getString('tvbox_admode'), 'skip');
         expect(reloaded.getString('tvbox_hwdec'), 'hw');
+      } finally {
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    });
+  });
+
+  group('Regression fixes for filter, HLS proxy, headers, and CacheCleaner', () {
+    test('respects explicit empty block array in category-filter.json', () {
+      final tmp = Directory.systemTemp.createTempSync('kimbox_empty_block_');
+      try {
+        final filterFile = File(p.join(tmp.path, 'category-filter.json'));
+        filterFile.writeAsStringSync(jsonEncode({
+          'version': 1,
+          'block': [],
+          'allow': [],
+          'sites': {},
+        }));
+        AppPaths.categoryFilterFile = filterFile.path;
+        final cfg = CategoryFilterService.load(force: true);
+        expect(cfg.block, isEmpty);
+        const apiSite = SiteInfo(
+          key: 'cms1',
+          name: 'CMS站',
+          type: 1,
+          api: 'https://api.example.com/vod',
+        );
+        expect(CategoryFilterService.isBlockedCategoryName('电影', apiSite), false);
+      } finally {
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    });
+
+    test('preserves data: key URIs in proxyUris and deduplicates headers', () {
+      const playlist = '#EXTM3U\n'
+          '#EXT-X-KEY:METHOD=AES-128,URI="data:text/plain;base64,AAAA"\n'
+          'https://cdn.example.com/seg1.ts\n';
+      final proxied = HlsAdFilter.proxyUris(playlist, const {}, 8899);
+      expect(proxied.contains('URI="data:text/plain;base64,AAAA"'), true);
+      expect(proxied.contains('http://127.0.0.1:8899/api/seg?u='), true);
+
+      final hdr = LocalHttpServer.sanitizeHeaders({'user-agent': 'CustomUA/1.0'});
+      expect(hdr.keys.where((k) => k.toLowerCase() == 'user-agent').length, 1);
+      expect(hdr['user-agent'], 'CustomUA/1.0');
+    });
+
+    test('CacheCleaner scans and cleans custom app cache directory accurately',
+        () {
+      final tmp = Directory.systemTemp.createTempSync('kimbox_cache_clean_');
+      try {
+        final cacheDir = Directory(p.join(tmp.path, 'cache'))
+          ..createSync(recursive: true);
+        File(p.join(cacheDir.path, 'config_1.json'))
+            .writeAsBytesSync(List<int>.filled(2048, 65));
+        final info = CacheCleaner.getCacheInfo(
+          customCacheDir: cacheDir.path,
+          customAppData: tmp.path,
+        );
+        expect(info.sizeBytes, 2048);
+        expect(info.path, cacheDir.path);
+        final res = CacheCleaner.cleanCache(
+          customCacheDir: cacheDir.path,
+          customAppData: tmp.path,
+        );
+        expect(res.currentMB, 0.0);
+        expect(File(p.join(cacheDir.path, 'config_1.json')).existsSync(), false);
       } finally {
         try {
           tmp.deleteSync(recursive: true);

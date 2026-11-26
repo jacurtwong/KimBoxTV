@@ -29,6 +29,19 @@ class _HomeViewState extends ConsumerState<HomeView>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
+    ref.listenManual<bool>(
+      appControllerProvider.select((s) => s.refreshingHome),
+      (_, refreshing) {
+        if (!mounted) return;
+        if (refreshing && !_spinCtrl.isAnimating) {
+          _spinCtrl.repeat();
+        } else if (!refreshing && _spinCtrl.isAnimating) {
+          _spinCtrl.stop();
+          _spinCtrl.reset();
+        }
+      },
+      fireImmediately: true,
+    );
     _scrollCtrl.addListener(_onScroll);
   }
 
@@ -59,7 +72,8 @@ class _HomeViewState extends ConsumerState<HomeView>
       if (st.listMode != ListMode.category ||
           st.listLoading ||
           st.page >= st.pagecount ||
-          st.videos.isEmpty) {
+          st.videos.isEmpty ||
+          st.footerText.startsWith('加载失败')) {
         return;
       }
       final pos = _scrollCtrl.position;
@@ -73,13 +87,6 @@ class _HomeViewState extends ConsumerState<HomeView>
   Widget build(BuildContext context) {
     final st = ref.watch(appControllerProvider);
     final ctrl = ref.read(appControllerProvider.notifier);
-
-    if (st.refreshingHome && !_spinCtrl.isAnimating) {
-      _spinCtrl.repeat();
-    } else if (!st.refreshingHome && _spinCtrl.isAnimating) {
-      _spinCtrl.stop();
-      _spinCtrl.reset();
-    }
 
     _scheduleMaybeLoadMore();
 
@@ -411,11 +418,14 @@ class _HomeViewState extends ConsumerState<HomeView>
                             horizontal: 10, vertical: 8),
                         onPressed: () async {
                           final info = ctrl.getAppCacheInfo();
+                          final locText = info.path.isNotEmpty
+                              ? info.path
+                              : r'data\cache';
                           final ok = await showKimConfirmDialog(
                             context,
                             title: '清理缓存',
                             message:
-                                '检测到当前海报图片与临时运行缓存：${info.sizeMB} MB。\n\n• 存放位置：%APPDATA%\\KimBoxTV\\Cache\n• 说明：仅清理海报封面与临时渲染缓存，绝不影响您的配置源、收藏和播放历史。\n\n确定要立即清理缓存吗？',
+                                '检测到当前图片与运行缓存：${info.sizeMB} MB。\n\n• 存放位置：$locText\n• 说明：仅清理接口/分类快照缓存与内存海报缓存（及旧版遗留缓存），绝不影响您的配置源、收藏和播放历史。\n\n确定要立即清理缓存吗？',
                           );
                           if (ok && context.mounted) {
                             final freed = ctrl.cleanAppCacheNow();

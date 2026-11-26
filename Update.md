@@ -5,6 +5,20 @@
 
 ---
 
+## v3.18.22
+- **版本**：`3.18.22`
+- **日期**：`2026-11-27`
+- **标题**：全模块稳定性与交互体检修复（并发竞态、播放控制条/进度条、`CacheCleaner` 与边界防护）
+- **背景**：对全代码库进行系统性静态排查，发现一批影响日常看片体验与长运行稳定性的真实隐患：分类加载失败会无限自动重试、已缓存配置切换导致扫描状态锁死、快速点片/关播放器或空线路触发 `RangeError`、往回快退触发时间轴跳变误判、全屏控制栏在暂停/恢复时反相隐藏、进度条被拖动中断锁死、「忽略更新版本」红点失效、`JvmBridge` 启停互斥竞态、`CacheCleaner` 未清理实际 `data\cache` 等。
+- **改动**：
+  - **并发与状态锁死修复**：修复 `CategoryScanner.scanConfigCategories` 提前自增 `_scanSeq` 导致 `_running` 永久卡死问题；为 `AppController` 补全 `openDetail`/`loadHome`/`loadMore`/`loadAllSources`/`playEpisode`/`_maybeAutoNext` 请求序列号与空线路边界保护，并重构 `_applyConfig` 清理旧站点及串行重置 JVM；修正 `_syncUpdateBadge` 布尔表达式使「忽略更新」持久生效；补全 `JvmBridge` 启动中止、进程比对与 stdout 缓冲上限控制；
+  - **播放器与 UI 修复**：修复 `MpvPlayerService.seekAbsolute` 往回定位时被误判 HLS 时间跳变及 `dispose()` 未复位 `_initialized` 问题；修正全屏控制栏暂停/恢复隐藏判断、`KeyRepeatEvent` 长按连发与快进/音量乐观累加、`ExcludeFocus` 防选项抢走空格键、`_CustomSeekSlider` `onHorizontalDragCancel` 与 `onTapUp`；修复 `KimDropdown` 禁用态仍可点开、左上角 OSD 超长标题防遮挡时钟、确认弹窗补 `mounted` 防护与全屏关窗不覆盖正常窗口尺寸；
+  - **代理与缓存治理**：`CacheCleaner` 纳入 `AppPaths.cacheDir` 并显示真实目录；修复 `LocalHttpServer._handleSeg` 上游错误透传及头部已发后再改状态码异常，`HlsAdFilter.proxyUris` 放行 `data:` 密钥；`CategoryFilterService.load` 尊重用户显式清空 `"block": []`。
+- **验证**：新增过滤空黑名单、`data:` URI 放行、请求头大小写去重与 `CacheCleaner` 回归测试，全部单元测试与 `flutter analyze` 通过后构建 Release 交付验收。
+- **已知边界 / 回滚方式**：涉及多模块协同加固，如遇个别流行为差异可通过对应模块 git 提交精准定位或回退至 `v3.18.21`。
+
+---
+
 ## v3.18.21
 - **版本**：`3.18.21`
 - **日期**：`2026-11-27`

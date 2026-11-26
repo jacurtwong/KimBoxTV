@@ -297,7 +297,13 @@ class HlsAdFilter {
       if (s.startsWith('#')) {
         return line.replaceAllMapped(
           RegExp(r'URI="([^"]+)"'),
-          (m) => 'URI="${enc(m.group(1) ?? '')}"',
+          (m) {
+            final uriVal = m.group(1) ?? '';
+            if (!RegExp(r'^https?://', caseSensitive: false).hasMatch(uriVal)) {
+              return m.group(0)!;
+            }
+            return 'URI="${enc(uriVal)}"';
+          },
         );
       }
       return RegExp(r'^https?://', caseSensitive: false).hasMatch(s)

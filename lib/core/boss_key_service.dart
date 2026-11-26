@@ -242,8 +242,22 @@ class WindowStateService {
     _saveTimer = Timer(const Duration(milliseconds: 500), saveNow);
   }
 
+  static const _fullscreenChannel = MethodChannel('kimbox/window_fullscreen');
+
   static Future<void> saveNow() async {
     try {
+      bool isFullscreen = false;
+      try {
+        isFullscreen =
+            await _fullscreenChannel.invokeMethod<bool>('isFullScreen') ??
+                false;
+      } catch (_) {}
+      if (!isFullscreen) {
+        try {
+          isFullscreen = await windowManager.isFullScreen();
+        } catch (_) {}
+      }
+      if (isFullscreen) return;
       final bounds = await windowManager.getBounds();
       final max = await windowManager.isMaximized();
       final data = {

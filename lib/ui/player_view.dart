@@ -23,6 +23,11 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
   Timer? _barHideTimer;
 
   double? _seekDragPct;
+  double? _volDragPct;
+  double? _optimisticSeekPos;
+  DateTime _optimisticSeekUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  double? _optimisticVol;
+  DateTime _optimisticVolUntil = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
 
@@ -47,7 +52,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     super.dispose();
   }
 
-  void _showBars() {
+  void _showBars({bool? assumePaused}) {
     _barHideTimer?.cancel();
     if (!_barsVisible || _hideCursor) {
       setState(() {
@@ -56,9 +61,12 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
       });
     }
     final st = ref.read(appControllerProvider);
-    if (st.isFullscreen && !st.mpv.paused) {
+    final paused = assumePaused ?? st.mpv.paused;
+    if (st.isFullscreen && !paused) {
       _barHideTimer = Timer(const Duration(milliseconds: 2500), () {
         if (!mounted) return;
+        final cur = ref.read(appControllerProvider);
+        if (!cur.isFullscreen || cur.mpv.paused) return;
         setState(() {
           _barsVisible = false;
           _hideCursor = true;
@@ -78,7 +86,9 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final isDown = event is KeyDownEvent;
+    final isRepeat = event is KeyRepeatEvent;
+    if (!isDown && !isRepeat) return KeyEventResult.ignored;
     final primaryFocus = FocusManager.instance.primaryFocus;
     if (primaryFocus != null && primaryFocus != _playerFocus) {
       // Do not hijack when typing in any dialog input
@@ -91,27 +101,67 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     final st = ref.read(appControllerProvider);
     final k = event.logicalKey;
 
-    if (k == LogicalKeyboardKey.space) {
-      ctrl.mpvService.playOrPause();
+    if (k == LogicalKeyboardKey.arrowRight) {
+      final dur = st.mpv.duration;
+      final now = DateTime.now();
+      final basePos =
+          (_optimisticSeekPos != null && now.isBefore(_optimisticSeekUntil))
+              ? _optimisticSeekPos!
+              : st.mpv.position;
+      var target = basePos + 10;
+      if (dur > 0) target = target.clamp(0.0, dur);
+      _optimisticSeekPos = target;
+      _optimisticSeekUntil = now.add(const Duration(milliseconds: 1200));
+      ctrl.mpvService.seekAbsolute(target);
       _showBars();
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.arrowRight) {
-      final dur = st.mpv.duration;
-      final target = st.mpv.position + 10;
-      ctrl.mpvService.seekAbsolute(dur > 0 ? target.clamp(0, dur) : target);
-      return KeyEventResult.handled;
-    }
     if (k == LogicalKeyboardKey.arrowLeft) {
-      ctrl.mpvService.seekAbsolute((st.mpv.position - 10).clamp(0, double.infinity));
+      final now = DateTime.now();
+      final basePos =
+          (_optimisticSeekPos != null && now.isBefore(_optimisticSeekUntil))
+              ? _optimisticSeekPos!
+              : st.mpv.position;
+      final target = (basePos - 10).clamp(0.0, double.infinity);
+      _optimisticSeekPos = target;
+      _optimisticSeekUntil = now.add(const Duration(milliseconds: 1200));
+      ctrl.mpvService.seekAbsolute(target);
+      _showBars();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowUp) {
-      ctrl.mpvService.setVolume((st.mpv.volume + 5).clamp(0, 100));
+      final now = DateTime.now();
+      final baseVol =
+          (_optimisticVol != null && now.isBefore(_optimisticVolUntil))
+              ? _optimisticVol!
+              : st.mpv.volume;
+      final target = (baseVol + 5).clamp(0.0, 100.0);
+      _optimisticVol = target;
+      _optimisticVolUntil = now.add(const Duration(milliseconds: 1200));
+      ctrl.mpvService.setVolume(target);
+      _showBars();
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowDown) {
-      ctrl.mpvService.setVolume((st.mpv.volume - 5).clamp(0, 100));
+      final now = DateTime.now();
+      final baseVol =
+          (_optimisticVol != null && now.isBefore(_optimisticVolUntil))
+              ? _optimisticVol!
+              : st.mpv.volume;
+      final target = (baseVol - 5).clamp(0.0, 100.0);
+      _optimisticVol = target;
+      _optimisticVolUntil = now.add(const Duration(milliseconds: 1200));
+      ctrl.mpvService.setVolume(target);
+      _showBars();
+      return KeyEventResult.handled;
+    }
+
+    if (!isDown) return KeyEventResult.ignored;
+
+    if (k == LogicalKeyboardKey.space) {
+      final nextPaused = !st.mpv.paused;
+      ctrl.mpvService.playOrPause();
+      _showBars(assumePaused: nextPaused);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.keyF) {
@@ -179,8 +229,9 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                       behavior: HitTestBehavior.opaque,
                       onTap: () {
                         _playerFocus.requestFocus();
+                        final nextPaused = !st.mpv.paused;
                         ctrl.mpvService.playOrPause();
-                        _showBars();
+                        _showBars(assumePaused: nextPaused);
                       },
                       onDoubleTap: () => ctrl.toggleFullscreen(),
                       child: Container(
@@ -498,7 +549,17 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     return IgnorePointer(
       child: Stack(
         children: [
-          Positioned(top: 14, left: 16, child: Text(tlText, style: osdStyle)),
+          Positioned(
+            top: 14,
+            left: 16,
+            right: 110,
+            child: Text(
+              tlText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: osdStyle,
+            ),
+          ),
           Positioned(top: 14, right: 16, child: Text(clock, style: osdStyle)),
           Positioned(bottom: 26, left: 16, child: Text(timeStr, style: osdStyle)),
           Positioned(bottom: 26, right: 16, child: Text(brParts, style: osdStyle)),
@@ -528,7 +589,8 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
         : st.mpv.position;
     final seekPct =
         _seekDragPct ?? (dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0);
-    final volPct = st.mpv.muted ? 0.0 : (st.mpv.volume / 100.0).clamp(0.0, 1.0);
+    final volPct = _volDragPct ??
+        (st.mpv.muted ? 0.0 : (st.mpv.volume / 100.0).clamp(0.0, 1.0));
     final bufPct = (dur > 0 && st.mpv.cacheDuration > 0)
         ? ((pos + st.mpv.cacheDuration) / dur).clamp(0.0, 1.0)
         : 0.0;
@@ -568,7 +630,11 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
           _CtrlIconButton(
             icon: st.mpv.paused ? Icons.play_arrow : Icons.pause,
             tooltip: '播放/暂停 (空格)',
-            onTap: () => ctrl.mpvService.playOrPause(),
+            onTap: () {
+              final nextPaused = !st.mpv.paused;
+              ctrl.mpvService.playOrPause();
+              _showBars(assumePaused: nextPaused);
+            },
           ),
           _CtrlIconButton(
             icon: Icons.forward_30,
@@ -600,6 +666,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
               value: seekPct,
               bufferValue: bufPct,
               onDrag: (p) => setState(() => _seekDragPct = p),
+              onDragCancel: () => setState(() => _seekDragPct = null),
               onCommit: (p) {
                 setState(() => _seekDragPct = null);
                 if (dur > 0) {
@@ -623,8 +690,15 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             width: 112,
             child: _CustomSeekSlider(
               value: volPct,
-              onDrag: (p) => ctrl.mpvService.setVolume(p * 100),
-              onCommit: (p) => ctrl.mpvService.setVolume(p * 100),
+              onDrag: (p) {
+                setState(() => _volDragPct = p);
+                ctrl.mpvService.setVolume(p * 100);
+              },
+              onDragCancel: () => setState(() => _volDragPct = null),
+              onCommit: (p) {
+                setState(() => _volDragPct = null);
+                ctrl.mpvService.setVolume(p * 100);
+              },
             ),
           ),
           const SizedBox(width: 8),
@@ -869,6 +943,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                             message:
                                 '${s.siteName}\n线路: ${s.lines.join(' / ')}\n集数: ${s.episodes}\n响应: ${s.ms}ms',
                             child: InkWell(
+                              canRequestFocus: false,
                               onTap: () => ctrl.switchToSameSource(s),
                               borderRadius: BorderRadius.circular(6),
                               child: Container(
@@ -1565,12 +1640,14 @@ class _CustomSeekSlider extends StatefulWidget {
   final double bufferValue;
   final ValueChanged<double> onDrag;
   final ValueChanged<double> onCommit;
+  final VoidCallback? onDragCancel;
 
   const _CustomSeekSlider({
     required this.value,
     this.bufferValue = 0,
     required this.onDrag,
     required this.onCommit,
+    this.onDragCancel,
   });
 
   @override
@@ -1612,7 +1689,11 @@ class _CustomSeekSliderState extends State<_CustomSeekSlider> {
               setState(() => _dragging = false);
               widget.onCommit(_pctFromLocal(d.localPosition, w));
             },
-            onTapDown: (d) {
+            onHorizontalDragCancel: () {
+              setState(() => _dragging = false);
+              widget.onDragCancel?.call();
+            },
+            onTapUp: (d) {
               widget.onCommit(_pctFromLocal(d.localPosition, w));
             },
             child: SizedBox(
@@ -1786,29 +1867,31 @@ class _CheckOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: Checkbox(
-                value: value,
-                onChanged: (v) => onChanged(v ?? false),
-                activeColor: KimTheme.accent,
-                side: const BorderSide(color: KimTheme.textMuted),
+    return ExcludeFocus(
+      child: GestureDetector(
+        onTap: () => onChanged(!value),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: Checkbox(
+                  value: value,
+                  onChanged: (v) => onChanged(v ?? false),
+                  activeColor: KimTheme.accent,
+                  side: const BorderSide(color: KimTheme.textMuted),
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: KimTheme.textMuted),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: KimTheme.textMuted),
+              ),
+            ],
+          ),
         ),
       ),
     );

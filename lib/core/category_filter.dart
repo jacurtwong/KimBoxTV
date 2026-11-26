@@ -78,14 +78,16 @@ class CategoryFilterService {
     try {
       if (!file.existsSync()) {
         final d = _defaultConfig();
-        file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert({
-          'version': 1,
-          'block': d.block,
-          'allow': d.allow,
-          'sites': d.sites,
-        }));
+        try {
+          file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert({
+            'version': 1,
+            'block': d.block,
+            'allow': d.allow,
+            'sites': d.sites,
+          }));
+          _cachedMtime = file.statSync().modified;
+        } catch (_) {}
         _cachedConfig = d;
-        _cachedMtime = file.statSync().modified;
         _lastError = null;
         return d;
       }
@@ -106,9 +108,10 @@ class CategoryFilterService {
             .toList();
       }
 
+      final hasExplicitBlock = obj.containsKey('block') && obj['block'] is List;
       final b = norm(obj['block']);
       final data = CategoryFilterConfig(
-        block: b.isNotEmpty ? b : List<String>.from(defaultBlock),
+        block: hasExplicitBlock ? b : List<String>.from(defaultBlock),
         allow: norm(obj['allow']),
         sites: obj['sites'] is Map
             ? Map<String, dynamic>.from(obj['sites'] as Map)
@@ -449,8 +452,6 @@ class CategoryScanner {
       }
       return;
     }
-    final seq = ++_scanSeq;
-    _wakeDelay();
 
     final cmsSites = sites.where((x) => !x.isDexSpider).toList();
     final cache = loadCatCache(configId);
@@ -475,6 +476,8 @@ class CategoryScanner {
         (a.key == activeSiteKey ? -1 : 0) - (b.key == activeSiteKey ? -1 : 0));
     if (todo.isEmpty) return;
 
+    final seq = ++_scanSeq;
+    _wakeDelay();
     _runningConfigId = configId;
     _running = true;
     _total = todo.length;
