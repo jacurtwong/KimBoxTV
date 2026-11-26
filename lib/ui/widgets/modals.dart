@@ -766,7 +766,7 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
                 children: [
                   Text(
                     _catFilter.ok
-                        ? '分类过滤：${_catFilter.blockCount} 条屏蔽 · ${_catFilter.allowCount} 条白名单${_catFilter.sitesCount > 0 ? ' · ${_catFilter.sitesCount} 个站点覆盖' : ''}'
+                        ? '分类过滤（仅 API 站点）：${_catFilter.blockCount} 条屏蔽 · ${_catFilter.allowCount} 条白名单${_catFilter.sitesCount > 0 ? ' · ${_catFilter.sitesCount} 个站点覆盖' : ''}'
                         : '分类过滤：${_catFilter.error}',
                     style: TextStyle(
                       fontSize: 12,

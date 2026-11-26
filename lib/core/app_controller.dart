@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.9',
+    this.version = '3.18.10',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.9',
+      current: '3.18.10',
       mode: 'portable',
       checking: false,
       lastCheck: 0,

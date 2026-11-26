@@ -58,7 +58,7 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
-  var appVersion = '3.18.9';
+  var appVersion = '3.18.10';
   try {
     final pkg = await PackageInfo.fromPlatform();
     if (pkg.version.isNotEmpty) appVersion = pkg.version;

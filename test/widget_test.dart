@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kimbox_tv/core/category_filter.dart';
 import 'package:kimbox_tv/core/config_parser.dart';
 import 'package:kimbox_tv/core/db/tvbox_db.dart';
 import 'package:kimbox_tv/core/hls_ad_filter.dart';
+import 'package:kimbox_tv/core/models.dart';
 import 'package:kimbox_tv/core/mpv_player_service.dart';
+import 'package:kimbox_tv/core/paths.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -177,6 +180,55 @@ void main() {
       final uhdTo1080 =
           MpvPlayerService.computeClampedRenderSize(3840, 2160, '1080');
       expect(uhdTo1080, (width: 1920, height: 1080));
+    });
+  });
+
+  group('CategoryFilterService', () {
+    test('filters API sites but excludes csp_ spider sites', () {
+      final tmp = Directory.systemTemp.createTempSync('kimboxtv_filter_test_');
+      try {
+        final filterFile = File(p.join(tmp.path, 'category-filter.json'));
+        filterFile.writeAsStringSync(jsonEncode({
+          'version': 1,
+          'block': ['伦理', '电影'],
+          'allow': [],
+          'sites': {},
+        }));
+        AppPaths.categoryFilterFile = filterFile.path;
+        CategoryFilterService.load(force: true);
+
+        const apiSite = SiteInfo(
+          key: 'cms1',
+          name: 'CMS站',
+          type: 1,
+          api: 'https://api.example.com/vod',
+          isDexSpider: false,
+        );
+        const cspSite = SiteInfo(
+          key: 'csp1',
+          name: 'CSP站',
+          type: 3,
+          api: 'csp_Demo',
+          isDexSpider: true,
+        );
+        const cspApiOnly = SiteInfo(
+          key: 'csp2',
+          name: 'CSP站2',
+          type: 3,
+          api: 'csp_Other',
+          isDexSpider: false,
+        );
+
+        expect(CategoryFilterService.isBlockedCategoryName('电影', apiSite), true);
+        expect(CategoryFilterService.isBlockedCategoryName('剧集', apiSite), false);
+        expect(CategoryFilterService.isBlockedCategoryName('电影', cspSite), false);
+        expect(CategoryFilterService.isBlockedCategoryName('伦理', cspSite), false);
+        expect(CategoryFilterService.isBlockedCategoryName('电影', cspApiOnly), false);
+      } finally {
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
     });
   });
 }

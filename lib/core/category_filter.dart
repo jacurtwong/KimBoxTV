@@ -140,13 +140,19 @@ class CategoryFilterService {
     );
   }
 
+  static bool _isCspSite(SiteInfo site) =>
+      site.isDexSpider || site.api.trim().toLowerCase().startsWith('csp_');
+
   static bool _siteRuleMatches(String ruleKey, SiteInfo? site) {
     if (ruleKey.isEmpty || site == null) return false;
     final k = ruleKey.trim().toLowerCase();
     return k == site.key.toLowerCase() || k == _normalizeApi(site.api);
   }
 
+  /// Evaluates whether [name] should be hidden for [site].
+  /// Only HTTP/CMS API sites are filtered; `csp_` / DEX spider sites are excluded.
   static bool isBlockedCategoryName(String name, [SiteInfo? site]) {
+    if (site != null && _isCspSite(site)) return false;
     final n = name.replaceAll(RegExp(r'\s+'), '').toLowerCase();
     if (n.isEmpty) return false;
     final cfg = load();
