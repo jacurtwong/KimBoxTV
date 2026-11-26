@@ -342,26 +342,27 @@ class MpvPlayerService {
     await _applyNativeOpt('demuxer-max-bytes', '$maxBytes');
     await _applyNativeOpt('demuxer-max-back-bytes', '${maxBytes ~/ 2}');
 
-    final s = start.floor().clamp(0, 864000);
-    await _applyNativeOpt('start', s > 0 ? '$s' : '0');
+    final clampedStart = start.clamp(0.0, 864000.0);
+    final startDur = clampedStart > 0.5
+        ? Duration(milliseconds: (clampedStart * 1000).round())
+        : null;
 
     _lastKnownDuration = 0;
-    _lastKnownPosition = s > 0 ? s.toDouble() : 0;
+    _lastKnownPosition = startDur != null ? clampedStart : 0;
     _timeOffset = 0;
-    _lastRawPos = s > 0 ? s.toDouble() : 0;
-    _selfSeekUntil = DateTime.now().add(Duration(seconds: s > 0 ? 6 : 3));
+    _lastRawPos = startDur != null ? clampedStart : 0;
+    _selfSeekUntil =
+        DateTime.now().add(Duration(seconds: startDur != null ? 6 : 3));
     _playbackStarted = true;
 
     await player.open(
-      Media(url, httpHeaders: headers),
+      Media(
+        url,
+        httpHeaders: headers,
+        start: startDur,
+      ),
       play: true,
     );
-
-    if (s > 0) {
-      Future.delayed(const Duration(seconds: 3), () {
-        if (_initialized) _applyNativeOpt('start', '0');
-      });
-    }
   }
 
   Future<void> seekAbsolute(double seconds) async {
