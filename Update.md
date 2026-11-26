@@ -5,6 +5,19 @@
 
 ---
 
+## v3.18.21
+- **版本**：`3.18.21`
+- **日期**：`2026-11-27`
+- **标题**：修复点击全量重扫后关闭弹窗导致后台分类扫描异常中止的问题
+- **背景**：用户在配置源管理弹窗点击「全量重扫」并关闭弹窗去播放影片后，后台分类扫描停止在第 5 个站。从 `app.log` 定位到崩溃栈：`Bad state: Cannot use "ref" after the widget was disposed.`——原 `_ConfigManagerDialogState._startCatScan` 把弹窗局部 `WidgetRef` 捕获进 `currentConfigId: () => ref.read(...)` 传给了脱离弹窗生命周期的后台扫描协程，弹窗销毁后工作线程立即抛异常退出。
+- **改动**：
+  - 在 `AppController` 新增 `startCatScan(String mode)`，统一使用全局控制器自身的 `() => state.currentConfigId` 启动手动扫描；
+  - 修改 `_ConfigManagerDialogState._startCatScan` 直接委托 `AppController.startCatScan(mode)`，彻底消除已销毁 `ref` 被后台任务访问的生命周期漏洞。
+- **验证**：审计全 UI 层 `unawaited` / `ref.read` 调用均安全无同类问题，`flutter analyze && flutter test` 通过后构建 Release 交付验收。
+- **已知边界 / 回滚方式**：弹窗关闭去播放或浏览其它页面期间全量/补漏扫描将持续完成直至全部入盘；回退直接还原对应提交。
+
+---
+
 ## v3.18.20
 - **版本**：`3.18.20`
 - **日期**：`2026-11-27`

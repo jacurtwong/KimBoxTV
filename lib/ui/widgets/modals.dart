@@ -377,14 +377,7 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
       );
       if (!ok) return;
     }
-    unawaited(CategoryScanner.scanConfigCategories(
-      configId: st.currentConfigId!,
-      sites: st.sites,
-      activeSiteKey: st.activeSiteKey,
-      currentConfigId: () => ref.read(appControllerProvider).currentConfigId,
-      mode: mode,
-      forceClear: mode == 'all',
-    ));
+    ref.read(appControllerProvider.notifier).startCatScan(mode);
     ref.read(appControllerProvider.notifier).showToast(
           mode == 'missing'
               ? '开始补扫新源（没有记录的分类）'

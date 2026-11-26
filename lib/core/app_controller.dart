@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.20',
+    this.version = '3.18.21',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.20',
+      current: '3.18.21',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -2814,6 +2814,20 @@ class AppController extends StateNotifier<AppState> {
     final r = CacheCleaner.cleanCache();
     showToast('🧹 已清理 ${r.freedMB} MB 缓存空间');
     return r.freedMB;
+  }
+
+  /// 由全局控制器持有生命周期回调，避免管理弹窗关闭销毁 `ref` 后中断后台分类扫描。
+  void startCatScan(String mode) {
+    final cfgId = state.currentConfigId;
+    if (cfgId == null) return;
+    unawaited(CategoryScanner.scanConfigCategories(
+      configId: cfgId,
+      sites: state.sites,
+      activeSiteKey: state.activeSiteKey,
+      currentConfigId: () => state.currentConfigId,
+      mode: mode,
+      forceClear: mode == 'all',
+    ));
   }
 
   Future<({bool ok, String? error, String shortcut})> updateBossKey(
