@@ -12,6 +12,7 @@ KimBoxTV 是基于 Flutter + libmpv + JVM Companion 的 Windows 桌面影音播�
      * `lib/main.dart`（`var appVersion = 'x.y.z';`）
      * `lib/core/app_controller.dart`（`AppState.version` 与 `UpdateStatusSnapshot.current`）
      * `lib/core/updater.dart`（`AppUpdater.currentVersion`）
+   * 在根目录 **`Update.md`** 顶部**倒序追加一条**更新记录（遵循「发布工程与文档纪律」），格式统一为：`版本 / 日期 / 标题 / 背景 / 改动 / 验证 / 已知边界（或回滚方式）`，重点说明**为什么改**（业务背景/问题根因/预期收益），而非单纯罗列文件名。
    * 运行 `flutter analyze && flutter test`，确保零报错且全部测试通过。
    * 立即执行 `git add` 与 `git commit`。
 
