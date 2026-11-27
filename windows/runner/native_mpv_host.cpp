@@ -930,83 +930,92 @@ flutter::EncodableMap NativeMpvHost::CaptureFrame() {
     return out;
   }
 
-  MpvNode items[2]{};
-  items[0].format = kMpvFormatString;
-  items[0].u.string = const_cast<char*>("screenshot-raw");
-  items[1].format = kMpvFormatString;
-  items[1].u.string = const_cast<char*>("video");
-  MpvNodeList list{};
-  list.num = 2;
-  list.values = items;
-  list.keys = nullptr;
-  MpvNode args{};
-  args.format = kMpvFormatNodeArray;
-  args.u.list = &list;
+  auto tryCapture = [&](const char* target) -> bool {
+    MpvNode items[2]{};
+    items[0].format = kMpvFormatString;
+    items[0].u.string = const_cast<char*>("screenshot-raw");
+    items[1].format = kMpvFormatString;
+    items[1].u.string = const_cast<char*>(target);
+    MpvNodeList list{};
+    list.num = 2;
+    list.values = items;
+    list.keys = nullptr;
+    MpvNode args{};
+    args.format = kMpvFormatNodeArray;
+    args.u.list = &list;
 
-  MpvNode res{};
-  if (g_procs.command_node(ctx_, &args, &res) < 0) {
-    return out;
-  }
-
-  if (res.format == kMpvFormatNodeMap && res.u.list != nullptr) {
-    int64_t w = 0, h = 0, stride = 0;
-    std::string fmt;
-    const MpvByteArray* ba = nullptr;
-    for (int i = 0; i < res.u.list->num; ++i) {
-      const char* k = res.u.list->keys ? res.u.list->keys[i] : nullptr;
-      if (!k) continue;
-      const MpvNode& v = res.u.list->values[i];
-      if (std::strcmp(k, "w") == 0 && v.format == kMpvFormatInt64) {
-        w = v.u.int64;
-      } else if (std::strcmp(k, "h") == 0 && v.format == kMpvFormatInt64) {
-        h = v.u.int64;
-      } else if (std::strcmp(k, "stride") == 0 && v.format == kMpvFormatInt64) {
-        stride = v.u.int64;
-      } else if (std::strcmp(k, "format") == 0 &&
-                 v.format == kMpvFormatString && v.u.string) {
-        fmt = v.u.string;
-      } else if (std::strcmp(k, "data") == 0 &&
-                 v.format == kMpvFormatByteArray) {
-        ba = v.u.ba;
-      }
+    MpvNode res{};
+    if (g_procs.command_node(ctx_, &args, &res) < 0) {
+      return false;
     }
 
-    if (w > 0 && h > 0 && w <= 4096 && h <= 4096 && stride >= w * 4 && ba &&
-        ba->data &&
-        ba->size >= static_cast<size_t>(stride) * static_cast<size_t>(h)) {
-      const size_t row_bytes = static_cast<size_t>(w) * 4;
-      std::vector<uint8_t> pixels(row_bytes * static_cast<size_t>(h));
-      const auto* src = static_cast<const uint8_t*>(ba->data);
-      const bool is_rgba = (fmt == "rgba" || fmt == "rgb0");
-      const bool opaque = (fmt == "bgr0" || fmt == "rgb0" || fmt.empty());
-      for (int64_t y = 0; y < h; ++y) {
-        const uint8_t* row =
-            src + static_cast<size_t>(y) * static_cast<size_t>(stride);
-        uint8_t* dst = pixels.data() + static_cast<size_t>(y) * row_bytes;
-        if (!is_rgba && !opaque) {
-          std::memcpy(dst, row, row_bytes);
-        } else if (!is_rgba) {
-          std::memcpy(dst, row, row_bytes);
-          for (size_t x = 3; x < row_bytes; x += 4) dst[x] = 0xFF;
-        } else {
-          for (size_t x = 0; x < row_bytes; x += 4) {
-            dst[x] = row[x + 2];
-            dst[x + 1] = row[x + 1];
-            dst[x + 2] = row[x];
-            dst[x + 3] = opaque ? 0xFF : row[x + 3];
-          }
+    bool captured = false;
+    if (res.format == kMpvFormatNodeMap && res.u.list != nullptr) {
+      int64_t w = 0, h = 0, stride = 0;
+      std::string fmt;
+      const MpvByteArray* ba = nullptr;
+      for (int i = 0; i < res.u.list->num; ++i) {
+        const char* k = res.u.list->keys ? res.u.list->keys[i] : nullptr;
+        if (!k) continue;
+        const MpvNode& v = res.u.list->values[i];
+        if (std::strcmp(k, "w") == 0 && v.format == kMpvFormatInt64) {
+          w = v.u.int64;
+        } else if (std::strcmp(k, "h") == 0 && v.format == kMpvFormatInt64) {
+          h = v.u.int64;
+        } else if (std::strcmp(k, "stride") == 0 && v.format == kMpvFormatInt64) {
+          stride = v.u.int64;
+        } else if (std::strcmp(k, "format") == 0 &&
+                   v.format == kMpvFormatString && v.u.string) {
+          fmt = v.u.string;
+        } else if (std::strcmp(k, "data") == 0 &&
+                   v.format == kMpvFormatByteArray) {
+          ba = v.u.ba;
         }
       }
-      out[flutter::EncodableValue("w")] =
-          flutter::EncodableValue(static_cast<int>(w));
-      out[flutter::EncodableValue("h")] =
-          flutter::EncodableValue(static_cast<int>(h));
-      out[flutter::EncodableValue("bytes")] =
-          flutter::EncodableValue(std::move(pixels));
-    }
-  }
 
-  g_procs.free_node_contents(&res);
+      if (w > 0 && h > 0 && w <= 7680 && h <= 4320 && stride >= w * 4 && ba &&
+          ba->data &&
+          ba->size >= static_cast<size_t>(stride) * static_cast<size_t>(h)) {
+        const size_t row_bytes = static_cast<size_t>(w) * 4;
+        std::vector<uint8_t> pixels(row_bytes * static_cast<size_t>(h));
+        const auto* src = static_cast<const uint8_t*>(ba->data);
+        const bool is_rgba = (fmt == "rgba" || fmt == "rgb0");
+        const bool opaque = (fmt == "bgr0" || fmt == "rgb0" || fmt.empty());
+        for (int64_t y = 0; y < h; ++y) {
+          const uint8_t* row =
+              src + static_cast<size_t>(y) * static_cast<size_t>(stride);
+          uint8_t* dst = pixels.data() + static_cast<size_t>(y) * row_bytes;
+          if (!is_rgba && !opaque) {
+            std::memcpy(dst, row, row_bytes);
+          } else if (!is_rgba) {
+            std::memcpy(dst, row, row_bytes);
+            for (size_t x = 3; x < row_bytes; x += 4) dst[x] = 0xFF;
+          } else {
+            for (size_t x = 0; x < row_bytes; x += 4) {
+              dst[x] = row[x + 2];
+              dst[x + 1] = row[x + 1];
+              dst[x + 2] = row[x];
+              dst[x + 3] = opaque ? 0xFF : row[x + 3];
+            }
+          }
+        }
+        out[flutter::EncodableValue("w")] =
+            flutter::EncodableValue(static_cast<int>(w));
+        out[flutter::EncodableValue("h")] =
+            flutter::EncodableValue(static_cast<int>(h));
+        out[flutter::EncodableValue("bytes")] =
+            flutter::EncodableValue(std::move(pixels));
+        captured = true;
+      }
+    }
+
+    g_procs.free_node_contents(&res);
+    return captured;
+  };
+
+  if (!tryCapture("window")) {
+    tryCapture("video");
+  }
   return out;
 }
 

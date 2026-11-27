@@ -366,13 +366,12 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                           ),
                         ),
 
-                        // OSD 信息层（纹理模式 / 原生窗口暂隐时兜底显示）
-                        if (st.osdVisible && (!isNative || st.videoObscured))
+                        // OSD 信息层（仅纹理模式，原生模式下始终用 ASS 叠加或窗口抓帧保留）
+                        if (st.osdVisible && !isNative)
                           _buildOsd(st, ctrl),
 
-                        // 广告调试面板（D 键 / 顶栏 🐞 调试）
-                        if (st.adDebugVisible &&
-                            (!isNative || st.videoObscured))
+                        // 广告调试面板（仅纹理模式，原生模式下始终用 ASS 叠加）
+                        if (st.adDebugVisible && !isNative)
                           Positioned(
                             top: 56,
                             right: 14,
@@ -382,9 +381,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                         // 舞台中央轻提示（加载期或纹理模式；原生播放期改由 ASS 叠加）
                         if (st.toastText != null &&
                             st.toastText!.isNotEmpty &&
-                            (!isNative ||
-                                st.videoObscured ||
-                                !ctrl.mpvService.isPlaybackStarted))
+                            (!isNative || !ctrl.mpvService.isPlaybackStarted))
                           IgnorePointer(
                             child: Center(
                               child: Container(
