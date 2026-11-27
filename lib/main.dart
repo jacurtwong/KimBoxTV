@@ -60,7 +60,7 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
-  var appVersion = '3.18.23';
+  var appVersion = '3.18.24';
   try {
     final pkg = await PackageInfo.fromPlatform();
     if (pkg.version.isNotEmpty) appVersion = pkg.version;
@@ -82,7 +82,61 @@ class KimBoxApp extends ConsumerStatefulWidget {
   ConsumerState<KimBoxApp> createState() => _KimBoxAppState();
 }
 
+class _ModalVideoObscurer extends NavigatorObserver {
+  final VoidCallback onObscureBegin;
+  final VoidCallback onObscureEnd;
+  final Set<Route<dynamic>> _activePopups = <Route<dynamic>>{};
+
+  _ModalVideoObscurer({
+    required this.onObscureBegin,
+    required this.onObscureEnd,
+  });
+
+  void _trackOpen(Route<dynamic> route) {
+    if (_activePopups.add(route)) {
+      Future.microtask(onObscureBegin);
+    }
+  }
+
+  void _trackClose(Route<dynamic> route) {
+    if (_activePopups.remove(route)) {
+      Future.microtask(onObscureEnd);
+    }
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (previousRoute != null) {
+      _trackOpen(route);
+    }
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _trackClose(route);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _trackClose(route);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (oldRoute != null) _trackClose(oldRoute);
+    if (newRoute != null && !newRoute.isFirst) _trackOpen(newRoute);
+  }
+}
+
 class _KimBoxAppState extends ConsumerState<KimBoxApp> with WindowListener {
+  late final _ModalVideoObscurer _modalObscurer = _ModalVideoObscurer(
+    onObscureBegin: () {
+      if (mounted) ref.read(appControllerProvider.notifier).beginVideoObscured();
+    },
+    onObscureEnd: () {
+      if (mounted) ref.read(appControllerProvider.notifier).endVideoObscured();
+    },
+  );
   @override
   void initState() {
     super.initState();
@@ -131,6 +185,7 @@ class _KimBoxAppState extends ConsumerState<KimBoxApp> with WindowListener {
       title: 'KimBoxTV',
       debugShowCheckedModeBanner: false,
       theme: KimTheme.buildTheme(),
+      navigatorObservers: [_modalObscurer],
       home: const _RootShell(),
     );
   }

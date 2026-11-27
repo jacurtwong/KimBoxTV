@@ -10,6 +10,7 @@ add_executable(${BINARY_NAME} WIN32
   "boss_key_channel.cpp"
   "flutter_window.cpp"
   "main.cpp"
+  "native_mpv_host.cpp"
   "process_job.cpp"
   "render_probe_channel.cpp"
   "utils.cpp"

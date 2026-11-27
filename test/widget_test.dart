@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/painting.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kimbox_tv/core/app_controller.dart';
 import 'package:kimbox_tv/core/cache_cleaner.dart';
@@ -13,6 +15,7 @@ import 'package:kimbox_tv/core/models.dart';
 import 'package:kimbox_tv/core/mpv_player_service.dart';
 import 'package:kimbox_tv/core/paths.dart';
 import 'package:kimbox_tv/core/settings_store.dart';
+import 'package:kimbox_tv/ui/player_view.dart';
 import 'package:kimbox_tv/ui/widgets/poster_image_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -594,6 +597,84 @@ void main() {
           tmp.deleteSync(recursive: true);
         } catch (_) {}
       }
+    });
+
+    test('MpvPlayerService native ASS overlay escaping and backend labels', () {
+      expect(
+        const MpvMetaSnapshot(renderBackend: 'native_d3d11').renderBackendLabel,
+        '原生直出 (vo=gpu / D3D11)',
+      );
+      expect(
+        MpvPlayerService.escapeAssText(r'标题 {1}\n第二行'.replaceAll(r'\n', '\n')),
+        r'标题 \{1\}\N第二行',
+      );
+      final osd = MpvPlayerService.buildNativeOsdAss(
+        topLeft: 'Film - E01',
+        topRight: '12:00:00',
+        bottomLeft: '01:00 / 40:00',
+        bottomRight: '2.0 MB/s',
+      );
+      expect(osd.contains(r'{\an7'), true);
+      expect(osd.contains(r'{\an9'), true);
+      expect(osd.contains(r'{\an1'), true);
+      expect(osd.contains(r'{\an3'), true);
+      expect(MpvPlayerService.buildNativeToastAss('已跳过片头').contains(r'{\an5'), true);
+      expect(MpvPlayerService.buildNativeToastAss('   '), '');
+    });
+
+    testWidgets(
+        'PlayerView dispose clears native callbacks, hides viewport, and avoids ref errors',
+        (tester) async {
+      tester.view.physicalSize = const Size(1460, 920);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const nativeChannel = MethodChannel('kimbox/native_mpv');
+      final viewportCalls = <Map<dynamic, dynamic>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(nativeChannel, (call) async {
+        if (call.method == 'setViewport' && call.arguments is Map) {
+          viewportCalls.add(call.arguments as Map<dynamic, dynamic>);
+        }
+        return true;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(nativeChannel, null);
+      });
+
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final ctrl = container.read(appControllerProvider.notifier);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(body: PlayerView()),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(ctrl.mpvService.onNativeTap, isNotNull);
+      expect(ctrl.mpvService.onNativeDoubleTap, isNotNull);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(body: SizedBox.shrink()),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(tester.takeException(), isNull);
+      expect(ctrl.mpvService.onNativeTap, isNull);
+      expect(ctrl.mpvService.onNativeDoubleTap, isNull);
+      expect(ctrl.mpvService.onNativeMouseMove, isNull);
+      expect(viewportCalls.any((m) => m['visible'] == false), isTrue);
     });
   });
 }

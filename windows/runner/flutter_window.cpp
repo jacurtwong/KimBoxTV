@@ -34,7 +34,9 @@ bool FlutterWindow::OnCreate() {
   boss_key_ = std::make_unique<BossKeyHandler>(GetHandle());
   boss_key_channel_ = RegisterBossKeyChannel(messenger, boss_key_.get());
 
-  SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  HWND flutter_hwnd = flutter_controller_->view()->GetNativeWindow();
+  SetChildContent(flutter_hwnd);
+  native_mpv_host_ = RegisterNativeMpvHost(messenger, GetHandle(), flutter_hwnd);
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -47,6 +49,10 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   UninstallRenderProbe();
+  if (native_mpv_host_) {
+    native_mpv_host_->DetachAndDispose();
+    native_mpv_host_.reset();
+  }
   render_probe_channel_ = nullptr;
   process_job_channel_ = nullptr;
   fullscreen_channel_ = nullptr;

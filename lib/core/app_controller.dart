@@ -82,6 +82,10 @@ class AppState {
   final int cacheSecs;
   final String hwdecMode; // 'auto' | 'hw' | 'sw'
   final String renderResMode; // 'auto' | '720' | '1080'
+  final String renderEngine; // 'native' | 'texture'
+  final int videoObscureCount;
+
+  bool get videoObscured => videoObscureCount > 0;
 
   final List<ExternalPlayerInfo> externalPlayers;
   final String selectedExternalPlayerId;
@@ -95,7 +99,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.23',
+    this.version = '3.18.24',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -147,6 +151,8 @@ class AppState {
     this.cacheSecs = 120,
     this.hwdecMode = 'auto',
     this.renderResMode = 'auto',
+    this.renderEngine = 'native',
+    this.videoObscureCount = 0,
     this.externalPlayers = const [],
     this.selectedExternalPlayerId = '',
     this.sameSources = const [],
@@ -163,7 +169,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.23',
+      current: '3.18.24',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -239,6 +245,8 @@ class AppState {
     int? cacheSecs,
     String? hwdecMode,
     String? renderResMode,
+    String? renderEngine,
+    int? videoObscureCount,
     List<ExternalPlayerInfo>? externalPlayers,
     String? selectedExternalPlayerId,
     List<SameSourceResult>? sameSources,
@@ -308,6 +316,8 @@ class AppState {
       cacheSecs: cacheSecs ?? this.cacheSecs,
       hwdecMode: hwdecMode ?? this.hwdecMode,
       renderResMode: renderResMode ?? this.renderResMode,
+      renderEngine: renderEngine ?? this.renderEngine,
+      videoObscureCount: videoObscureCount ?? this.videoObscureCount,
       externalPlayers: externalPlayers ?? this.externalPlayers,
       selectedExternalPlayerId:
           selectedExternalPlayerId ?? this.selectedExternalPlayerId,
@@ -413,6 +423,9 @@ class AppController extends StateNotifier<AppState> {
     final hwdec = ['auto', 'hw', 'sw'].contains(rawHw) ? rawHw : 'auto';
     final rawRes = _prefs.getString('tvbox_render_res') ?? 'auto';
     final renderRes = ['auto', '720', '1080'].contains(rawRes) ? rawRes : 'auto';
+    final rawEngine = _prefs.getString('tvbox_render_engine') ?? 'native';
+    final renderEngine =
+        ['native', 'texture'].contains(rawEngine) ? rawEngine : 'native';
     final osdVisible = _prefs.getString('tvbox_osd') == '1';
     final adDebugVisible = _prefs.getString('tvbox_addebug') == '1';
 
@@ -442,6 +455,7 @@ class AppController extends StateNotifier<AppState> {
       cacheSecs: cacheSecs,
       hwdecMode: hwdec,
       renderResMode: renderRes,
+      renderEngine: renderEngine,
       osdVisible: osdVisible,
       adDebugVisible: adDebugVisible,
       bossKeyShortcut: BossKeyService.currentShortcut,
@@ -450,6 +464,7 @@ class AppController extends StateNotifier<AppState> {
       jvmStatus: _buildJvmStatus(),
     );
 
+    await mpvService.setRenderEngine(renderEngine);
     unawaited(mpvService.setRenderResMode(renderRes));
     if (adDebugVisible) _startMpvMetaTimer();
 
@@ -2771,6 +2786,64 @@ class AppController extends StateNotifier<AppState> {
     Future.delayed(const Duration(milliseconds: 250), _refreshMpvMetaOnce);
     const labels = {'auto': '跟随窗口', '720': '720p', '1080': '1080p'};
     showToast('渲染分辨率：${labels[res] ?? res}', 2500);
+  }
+
+  void beginVideoObscured() {
+    state = state.copyWith(videoObscureCount: state.videoObscureCount + 1);
+  }
+
+  void endVideoObscured() {
+    if (state.videoObscureCount <= 0) return;
+    state = state.copyWith(videoObscureCount: state.videoObscureCount - 1);
+  }
+
+  Future<void> saveRenderEngine(String engine) async {
+    final next = engine == 'texture' ? 'texture' : 'native';
+    if (next == state.renderEngine) return;
+    _prefs.setString('tvbox_render_engine', next);
+    const labels = {
+      'native': '原生直出 (vo=gpu)',
+      'texture': '纹理兼容 (ANGLE/兜底)',
+    };
+    final label = labels[next] ?? next;
+
+    final detail = state.currentDetail;
+    final source = (detail != null &&
+            state.currentSourceIdx >= 0 &&
+            state.currentSourceIdx < detail.playSources.length)
+        ? detail.playSources[state.currentSourceIdx]
+        : null;
+    final ep = (source != null &&
+            state.currentEpIdx >= 0 &&
+            state.currentEpIdx < source.episodes.length)
+        ? source.episodes[state.currentEpIdx]
+        : null;
+
+    final resumePos = (state.playerOpen && ep != null)
+        ? resolveActivePlaybackPosition(
+            currentPos: state.mpv.position,
+            lastGoodPos: _lastGoodPos,
+          )
+        : 0.0;
+    if (state.playerOpen && ep != null) {
+      saveHistory(force: true);
+    }
+
+    await mpvService.setRenderEngine(next);
+    state = state.copyWith(renderEngine: next);
+
+    if (state.playerOpen && ep != null) {
+      showToast(
+        resumePos > 1
+            ? '渲染引擎：$label（从 ${fmtTime(resumePos)} 重载当前集）'
+            : '渲染引擎：$label（正在重载当前集）',
+        3200,
+      );
+      await playEpisode(ep.url, resumeAt: resumePos);
+      return;
+    }
+
+    showToast('渲染引擎：$label', 2500);
   }
 
   Future<void> refreshTracks() async {

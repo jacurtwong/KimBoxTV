@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../core/app_controller.dart';
 import '../core/models.dart';
+import '../core/mpv_player_service.dart';
 import 'theme.dart';
 import 'widgets/common_widgets.dart';
 
@@ -18,6 +20,9 @@ class PlayerView extends ConsumerStatefulWidget {
 
 class _PlayerViewState extends ConsumerState<PlayerView> {
   final FocusNode _playerFocus = FocusNode();
+  final GlobalKey _stageKey = GlobalKey();
+  late final AppController _ctrl;
+  late final MpvPlayerService _mpv;
   bool _barsVisible = true;
   bool _hideCursor = false;
   Timer? _barHideTimer;
@@ -30,24 +35,122 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
   DateTime _optimisticVolUntil = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
+  ui.Image? _obscureFrame;
+  bool _waitingObscureFrame = false;
+  int _obscureSeq = 0;
+  Timer? _obscureTimer;
 
   @override
   void initState() {
     super.initState();
+    _ctrl = ref.read(appControllerProvider.notifier);
+    _mpv = _ctrl.mpvService;
+    ref.listenManual<bool>(
+      appControllerProvider.select((s) => s.videoObscured),
+      (prev, next) {
+        if (!mounted) return;
+        if (prev != true && next) {
+          _handleVideoObscureBegin();
+        } else if (prev == true && !next) {
+          _handleVideoObscureEnd();
+        }
+      },
+    );
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && ref.read(appControllerProvider).osdVisible) {
+      if (!mounted || !context.mounted) return;
+      if (ref.read(appControllerProvider).osdVisible) {
         setState(() => _now = DateTime.now());
       }
     });
+    _mpv.onNativeTap = () {
+      if (!mounted || !context.mounted) return;
+      final cur = ref.read(appControllerProvider);
+      if (!cur.playerOpen || cur.videoObscured) return;
+      _playerFocus.requestFocus();
+      final nextPaused = !cur.mpv.paused;
+      _mpv.playOrPause();
+      _showBars(assumePaused: nextPaused);
+    };
+    _mpv.onNativeDoubleTap = () {
+      if (!mounted || !context.mounted) return;
+      final cur = ref.read(appControllerProvider);
+      if (!cur.playerOpen || cur.videoObscured) return;
+      _ctrl.toggleFullscreen();
+    };
+    _mpv.onNativeMouseMove = () {
+      if (!mounted || !context.mounted) return;
+      if (!ref.read(appControllerProvider).playerOpen) return;
+      _showBars();
+    };
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _playerFocus.requestFocus();
     });
   }
 
+  void _replaceObscureFrame(ui.Image? next) {
+    final prev = _obscureFrame;
+    _obscureFrame = next;
+    if (prev != null && !identical(prev, next)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => prev.dispose());
+    }
+  }
+
+  void _handleVideoObscureBegin() {
+    final seq = ++_obscureSeq;
+    _obscureTimer?.cancel();
+    if (!mounted || !context.mounted) return;
+    final st = ref.read(appControllerProvider);
+    if (st.renderEngine != 'native' ||
+        !st.playerOpen ||
+        !_mpv.isPlaybackStarted ||
+        st.mpv.width <= 0) {
+      _waitingObscureFrame = false;
+      return;
+    }
+    _waitingObscureFrame = true;
+    _obscureTimer = Timer(const Duration(milliseconds: 90), () {
+      if (!mounted || seq != _obscureSeq || !_waitingObscureFrame) return;
+      setState(() => _waitingObscureFrame = false);
+    });
+    unawaited(() async {
+      final img = await _mpv.captureNativeFrame();
+      if (!mounted ||
+          !context.mounted ||
+          seq != _obscureSeq ||
+          !ref.read(appControllerProvider).videoObscured) {
+        img?.dispose();
+        return;
+      }
+      _obscureTimer?.cancel();
+      setState(() {
+        _replaceObscureFrame(img);
+        _waitingObscureFrame = false;
+      });
+    }());
+  }
+
+  void _handleVideoObscureEnd() {
+    ++_obscureSeq;
+    _obscureTimer?.cancel();
+    _waitingObscureFrame = false;
+  }
+
   @override
   void dispose() {
+    ++_obscureSeq;
+    _obscureTimer?.cancel();
     _barHideTimer?.cancel();
     _clockTimer?.cancel();
+    final staleFrame = _obscureFrame;
+    _obscureFrame = null;
+    if (staleFrame != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => staleFrame.dispose());
+    }
+    _mpv.onNativeTap = null;
+    _mpv.onNativeDoubleTap = null;
+    _mpv.onNativeMouseMove = null;
+    unawaited(_mpv.clearNativeOverlays());
+    unawaited(_mpv.setNativeViewport(visible: false));
     _playerFocus.dispose();
     super.dispose();
   }
@@ -60,11 +163,12 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
         _hideCursor = false;
       });
     }
+    if (!mounted || !context.mounted) return;
     final st = ref.read(appControllerProvider);
     final paused = assumePaused ?? st.mpv.paused;
     if (st.isFullscreen && !paused) {
       _barHideTimer = Timer(const Duration(milliseconds: 2500), () {
-        if (!mounted) return;
+        if (!mounted || !context.mounted) return;
         final cur = ref.read(appControllerProvider);
         if (!cur.isFullscreen || cur.mpv.paused) return;
         setState(() {
@@ -203,6 +307,13 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
         ? ''
         : '${detail.year} · ${detail.area} · ${detail.typeName}';
 
+    final isNative = st.renderEngine == 'native';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && context.mounted) {
+        _syncNativeStage(ref.read(appControllerProvider), ctrl);
+      }
+    });
+
     return Focus(
       focusNode: _playerFocus,
       autofocus: true,
@@ -222,86 +333,109 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
 
               // 主舞台（视频 + 浮层 + 全屏浮动控制条）
               Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        _playerFocus.requestFocus();
-                        final nextPaused = !st.mpv.paused;
-                        ctrl.mpvService.playOrPause();
-                        _showBars(assumePaused: nextPaused);
-                      },
-                      onDoubleTap: () => ctrl.toggleFullscreen(),
-                      child: Container(
-                        color: Colors.black,
-                        child: Video(
-                          controller: ctrl.mpvService.videoController,
-                          controls: NoVideoControls,
-                          fill: Colors.black,
-                        ),
-                      ),
-                    ),
-
-                    // OSD 信息层（鼠标穿透）
-                    if (st.osdVisible) _buildOsd(st, ctrl),
-
-                    // 广告调试面板（D 键 / 顶栏 🐞 调试）
-                    if (st.adDebugVisible)
-                      Positioned(
-                        top: 56,
-                        right: 14,
-                        child: _AdDebugPanel(st: st, ctrl: ctrl),
-                      ),
-
-                    // 舞台中央轻提示
-                    if (st.toastText != null && st.toastText!.isNotEmpty)
-                      IgnorePointer(
-                        child: Center(
+                child: LayoutBuilder(
+                  builder: (context, _) {
+                    return Stack(
+                      key: _stageKey,
+                      fit: StackFit.expand,
+                      children: [
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            _playerFocus.requestFocus();
+                            final nextPaused = !st.mpv.paused;
+                            ctrl.mpvService.playOrPause();
+                            _showBars(assumePaused: nextPaused);
+                          },
+                          onDoubleTap: () => ctrl.toggleFullscreen(),
                           child: Container(
-                            constraints: BoxConstraints(
-                              maxWidth:
-                                  MediaQuery.of(context).size.width * 0.7,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.78),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: KimTheme.border),
-                            ),
-                            child: Text(
-                              st.toastText!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFFE6EDF3),
-                                fontSize: 14,
+                            color: Colors.black,
+                            child: (isNative || ctrl.mpvService.isNativeEngine)
+                                ? (_obscureFrame != null
+                                    ? RawImage(
+                                        image: _obscureFrame,
+                                        fit: BoxFit.contain,
+                                        filterQuality: FilterQuality.medium,
+                                      )
+                                    : const ColoredBox(color: Colors.black))
+                                : Video(
+                                    controller: ctrl.mpvService.videoController,
+                                    controls: NoVideoControls,
+                                    fill: Colors.black,
+                                  ),
+                          ),
+                        ),
+
+                        // OSD 信息层（纹理模式 / 原生窗口暂隐时兜底显示）
+                        if (st.osdVisible && (!isNative || st.videoObscured))
+                          _buildOsd(st, ctrl),
+
+                        // 广告调试面板（D 键 / 顶栏 🐞 调试）
+                        if (st.adDebugVisible &&
+                            (!isNative || st.videoObscured))
+                          Positioned(
+                            top: 56,
+                            right: 14,
+                            child: _AdDebugPanel(st: st, ctrl: ctrl),
+                          ),
+
+                        // 舞台中央轻提示（加载期或纹理模式；原生播放期改由 ASS 叠加）
+                        if (st.toastText != null &&
+                            st.toastText!.isNotEmpty &&
+                            (!isNative ||
+                                st.videoObscured ||
+                                !ctrl.mpvService.isPlaybackStarted))
+                          IgnorePointer(
+                            child: Center(
+                              child: Container(
+                                constraints: BoxConstraints(
+                                  maxWidth:
+                                      MediaQuery.of(context).size.width * 0.7,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 20, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.78),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: KimTheme.border),
+                                ),
+                                child: Text(
+                                  st.toastText!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFFE6EDF3),
+                                    fontSize: 14,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
 
-                    // 全屏模式下控制条浮在视频底部并自动隐藏
-                    if (st.isFullscreen)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: IgnorePointer(
-                          ignoring: !_barsVisible,
-                          child: AnimatedOpacity(
-                            duration: const Duration(milliseconds: 250),
-                            opacity: _barsVisible ? 1.0 : 0.0,
-                            child: _buildControlsBar(context, st, ctrl,
-                                floatingFullscreen: true),
+                        // 纹理模式下全屏浮动控制条叠加在视频底部
+                        if (!isNative && st.isFullscreen)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: IgnorePointer(
+                              ignoring: !_barsVisible,
+                              child: AnimatedOpacity(
+                                duration: const Duration(milliseconds: 250),
+                                opacity: _barsVisible ? 1.0 : 0.0,
+                                child: _buildControlsBar(context, st, ctrl,
+                                    floatingFullscreen: true),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                  ],
+                      ],
+                    );
+                  },
                 ),
               ),
+
+              // 方案 C：原生直出在全屏呼出控制栏时于底部让出 54px 实底控制栏，零 Airspace 遮挡
+              if (isNative && st.isFullscreen && _barsVisible)
+                _buildControlsBar(context, st, ctrl, floatingFullscreen: false),
 
               // 非全屏控制条：紧贴视频下方
               if (!st.isFullscreen)
@@ -314,6 +448,80 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
         ),
       ),
     );
+  }
+
+  void _syncNativeStage(AppState st, AppController ctrl) {
+    final mpv = ctrl.mpvService;
+    if (st.renderEngine != 'native') {
+      unawaited(mpv.setNativeViewport(visible: false));
+      return;
+    }
+
+    final stageCtx = _stageKey.currentContext;
+    final box = stageCtx?.findRenderObject() as RenderBox?;
+    final showNative = st.playerOpen &&
+        mpv.isPlaybackStarted &&
+        (!st.videoObscured || _waitingObscureFrame) &&
+        box != null &&
+        box.hasSize &&
+        box.size.width > 1 &&
+        box.size.height > 1;
+
+    if (!showNative) {
+      unawaited(mpv.setNativeViewport(visible: false));
+      return;
+    }
+
+    final origin = box.localToGlobal(Offset.zero);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final rect = Rect.fromLTWH(
+      origin.dx * dpr,
+      origin.dy * dpr,
+      box.size.width * dpr,
+      box.size.height * dpr,
+    );
+    unawaited(mpv.setNativeViewport(
+      physicalRect: rect,
+      visible: true,
+      hideCursor: st.isFullscreen && _hideCursor,
+    ).then((_) {
+      if (mounted &&
+          context.mounted &&
+          !ref.read(appControllerProvider).videoObscured &&
+          _obscureFrame != null) {
+        setState(() => _replaceObscureFrame(null));
+      }
+    }));
+
+    if (st.osdVisible) {
+      final osd = _composeOsdStrings(st, ctrl);
+      unawaited(mpv.setNativeOsdOverlay(
+        1,
+        MpvPlayerService.buildNativeOsdAss(
+          topLeft: osd.topLeft,
+          topRight: osd.topRight,
+          bottomLeft: osd.bottomLeft,
+          bottomRight: osd.bottomRight,
+        ),
+      ));
+    } else {
+      unawaited(mpv.setNativeOsdOverlay(1, ''));
+    }
+
+    final toast = st.toastText ?? '';
+    unawaited(mpv.setNativeOsdOverlay(
+      2,
+      toast.isNotEmpty ? MpvPlayerService.buildNativeToastAss(toast) : '',
+    ));
+
+    if (st.adDebugVisible) {
+      unawaited(mpv.setNativeOsdOverlay(
+        3,
+        MpvPlayerService.buildNativeAdDebugAss(_composeAdDebugLines(st)),
+      ));
+    } else {
+      unawaited(mpv.setNativeOsdOverlay(3, ''));
+    }
   }
 
   Widget _buildTopBar(
@@ -455,7 +663,8 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     );
   }
 
-  Widget _buildOsd(AppState st, AppController ctrl) {
+  ({String topLeft, String topRight, String bottomLeft, String bottomRight})
+      _composeOsdStrings(AppState st, AppController ctrl) {
     final detail = st.currentDetail;
     final curSource = (detail != null &&
             detail.playSources.isNotEmpty &&
@@ -494,7 +703,8 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     final srcRes = (st.mpv.width > 0 && st.mpv.height > 0)
         ? '${st.mpv.width} × ${st.mpv.height}'
         : '分辨率未知';
-    final outRes = (meta.renderWidth > 0 &&
+    final outRes = (st.renderEngine == 'texture' &&
+            meta.renderWidth > 0 &&
             meta.renderHeight > 0 &&
             (meta.renderWidth != st.mpv.width ||
                 meta.renderHeight != st.mpv.height))
@@ -533,6 +743,75 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
       if ((st.mpv.speed - 1).abs() > 0.01) '${st.mpv.speed.toStringAsFixed(2)}x',
     ].where((s) => s.isNotEmpty).join('  ');
 
+    return (
+      topLeft: tlText,
+      topRight: clock,
+      bottomLeft: timeStr,
+      bottomRight: brParts,
+    );
+  }
+
+  List<String> _composeAdDebugLines(AppState st) {
+    final meta = st.mpvMeta;
+    final hw = (meta.hwdecCurrent.isNotEmpty && meta.hwdecCurrent != 'no')
+        ? meta.hwdecCurrent
+        : '软解（CPU）';
+    final sizeStr = (meta.width > 0 && meta.height > 0)
+        ? '${meta.width}x${meta.height}'
+        : '未加载';
+    final lines = <String>[
+      '🐞 广告调试（再按 D 关闭）',
+      meta.running
+          ? '渲染 ${meta.renderBackendLabel} ｜ 解码 $hw ｜ $sizeStr ｜ 丢帧 ${meta.dropped}'
+          : '渲染 ${meta.renderBackendLabel} ｜ 尚未播放',
+    ];
+    final d = st.adDebug;
+    if (d == null) {
+      lines.add('（尚未播放）');
+      return lines;
+    }
+    if (d.title.isNotEmpty) lines.add('剧集 ${d.title}');
+    final modeDesc = d.cut
+        ? '剪辑：剔除 ${d.cuts.length} 段 / ${d.removed.round()}s'
+        : (!d.proxy
+            ? '直连播放（未做广告处理）'
+            : (d.wantCut ? '未改动列表（无广告）' : '跳过：播到自动跳走'));
+    lines.add('方式 $modeDesc ｜ 片长 ${d.duration > 0 ? AppController.fmtAd(d.duration) : '--'}');
+    if (d.ranges.isNotEmpty) {
+      for (var i = 0; i < d.ranges.length; i++) {
+        final r = d.ranges[i];
+        lines.add(
+            '#${i + 1} ${AppController.fmtAd(r.start)}-${AppController.fmtAd(r.end)} -> ${r.isTail ? '结尾' : AppController.fmtAd(r.target)}');
+      }
+    } else if (d.cut) {
+      for (var i = 0; i < d.cuts.length; i++) {
+        final c = d.cuts[i];
+        lines.add(
+            '#${i + 1} 已删 ${AppController.fmtAd(c.start)}-${AppController.fmtAd(c.end)} (${(c.end - c.start).toStringAsFixed(1)}s)');
+      }
+    } else {
+      lines.add('未检测到广告区间');
+    }
+    if (d.chunks.isNotEmpty) {
+      final summary = List.generate(d.chunks.length, (i) {
+        final c = d.chunks[i];
+        return '$i:${c.d.toStringAsFixed(0)}s/${c.n}${c.ad ? '★' : ''}';
+      }).take(14).join('  ');
+      lines.add('分块 $summary${d.chunks.length > 14 ? ' ...' : ''}');
+    }
+    var foot = d.cut ? '剪辑模式：列表已无广告' : '不在广告区间';
+    if (st.adHitIndex >= 0 && st.adHitIndex < d.ranges.length) {
+      foot =
+          '命中 #${st.adHitIndex + 1} -> ${AppController.fmtAd(d.ranges[st.adHitIndex].target)}';
+    }
+    if (st.adSkipLocked) foot += '（等待跳转生效）';
+    lines.add('${AppController.fmtAd(st.mpv.position)} · $foot');
+    return lines;
+  }
+
+  Widget _buildOsd(AppState st, AppController ctrl) {
+    final osd = _composeOsdStrings(st, ctrl);
+
     const osdStyle = TextStyle(
       color: Colors.white,
       fontFamily: 'Consolas',
@@ -554,15 +833,15 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             left: 16,
             right: 110,
             child: Text(
-              tlText,
+              osd.topLeft,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: osdStyle,
             ),
           ),
-          Positioned(top: 14, right: 16, child: Text(clock, style: osdStyle)),
-          Positioned(bottom: 26, left: 16, child: Text(timeStr, style: osdStyle)),
-          Positioned(bottom: 26, right: 16, child: Text(brParts, style: osdStyle)),
+          Positioned(top: 14, right: 16, child: Text(osd.topRight, style: osdStyle)),
+          Positioned(bottom: 26, left: 16, child: Text(osd.bottomLeft, style: osdStyle)),
+          Positioned(bottom: 26, right: 16, child: Text(osd.bottomRight, style: osdStyle)),
         ],
       ),
     );
@@ -1028,17 +1307,29 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                           },
                         ),
                         _LabeledOptionDropdown<String>(
-                          label: '渲染',
-                          value: st.renderResMode,
+                          label: '引擎',
+                          value: st.renderEngine,
                           items: const [
-                            KimSelectItem(value: 'auto', label: '跟随窗口'),
-                            KimSelectItem(value: '720', label: '720p（省 CPU）'),
-                            KimSelectItem(value: '1080', label: '1080p'),
+                            KimSelectItem(value: 'native', label: '原生直出（低开销）'),
+                            KimSelectItem(value: 'texture', label: '纹理兼容（兜底）'),
                           ],
                           onChanged: (v) {
-                            if (v != null) ctrl.saveRenderRes(v);
+                            if (v != null) unawaited(ctrl.saveRenderEngine(v));
                           },
                         ),
+                        if (st.renderEngine == 'texture')
+                          _LabeledOptionDropdown<String>(
+                            label: '渲染',
+                            value: st.renderResMode,
+                            items: const [
+                              KimSelectItem(value: 'auto', label: '跟随窗口'),
+                              KimSelectItem(value: '720', label: '720p（省 CPU）'),
+                              KimSelectItem(value: '1080', label: '1080p'),
+                            ],
+                            onChanged: (v) {
+                              if (v != null) ctrl.saveRenderRes(v);
+                            },
+                          ),
                       ],
                     ),
 
