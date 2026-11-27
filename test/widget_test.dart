@@ -97,6 +97,99 @@ void main() {
       expect(cut.text.contains('main1-0.ts'), true);
       expect(cut.text.contains('main2-0.ts'), true);
     });
+
+    test('handles leading empty disc, alternating tail ad, and short edge main chunks', () {
+      // Mirrors TV-神马云 / TV-非凡 / TV-爱奇艺 / TV-暴风 real playlists
+      final shenma = StringBuffer()
+        ..writeln('#EXTM3U')
+        ..writeln('#EXT-X-PLAYLIST-TYPE:VOD')
+        ..writeln('#EXT-X-DISCONTINUITY') // leading empty chunk
+        ..write(segBlock(124, 4.0, 'm1')) // 496s
+        ..writeln('#EXT-X-DISCONTINUITY')
+        ..write(segBlock(4, 4.1, 'ad_a')) // 16.4s (4:16)
+        ..writeln('#EXT-X-DISCONTINUITY')
+        ..write(segBlock(230, 4.0, 'm2')) // 920s
+        ..writeln('#EXT-X-DISCONTINUITY')
+        ..write(segBlock(5, 3.54, 'ad_b')) // 17.7s alternating tail ad
+        ..writeln('#EXT-X-ENDLIST');
+      final a1 = HlsAdFilter.analyzeAdRanges(shenma.toString());
+      expect(a1.chunks.where((c) => c.ad).length, 2);
+      expect(a1.chunks[2].ad, true);
+      expect(a1.chunks[4].ad, true);
+      final c1 = HlsAdFilter.buildCutPlaylist(shenma.toString(), a1);
+      expect(c1.cuts.length, 2);
+      expect(c1.text.startsWith('#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:'), true);
+
+      // Mirrors TV-爱奇艺 short intro chunk (<180s) with distinct /stream/ ad path
+      final iqiyi = StringBuffer()
+        ..writeln('#EXTM3U')
+        ..write(segBlock(25, 5.0, 'videos/main_a')) // 125s < 180s
+        ..writeln('#EXT-X-DISCONTINUITY')
+        ..write(segBlock(5, 3.5, 'stream/ad_mid')) // 17.5s
+        ..writeln('#EXT-X-DISCONTINUITY')
+        ..write(segBlock(52, 5.0, 'videos/main_b')) // 260s
+        ..writeln('#EXT-X-ENDLIST');
+      final a2 = HlsAdFilter.analyzeAdRanges(iqiyi.toString());
+      expect(a2.ranges.length, 1);
+      expect(a2.chunks[1].ad, true);
+    });
+
+    test('supports >6 mid-roll ads on long shows and repeated URIs on multi-chunk streams', () {
+      // Mirrors TV-魔都 8+ ads and TV-ikun multi-discontinuity repeated ad URIs
+      final modu = StringBuffer()..writeln('#EXTM3U');
+      for (var i = 0; i < 8; i++) {
+        modu.write(segBlock(100, 3.0, 'main_$i'));
+        modu.writeln('#EXT-X-DISCONTINUITY');
+        modu.writeln('#EXT-X-KEY:METHOD=NONE');
+        modu.write(segBlock(6, 2.94, 'ad_shared/seg'));
+        if (i < 7) modu.writeln('#EXT-X-DISCONTINUITY');
+      }
+      modu.writeln('#EXT-X-ENDLIST');
+      final a1 = HlsAdFilter.analyzeAdRanges(modu.toString());
+      expect(a1.rejected, false);
+      expect(a1.chunks.where((c) => c.ad).length, 8);
+
+      // Multi-discontinuity clean stream must NOT false-positive
+      final cleanMulti = StringBuffer()..writeln('#EXTM3U');
+      for (var i = 0; i < 50; i++) {
+        cleanMulti.write(segBlock(5 + (i % 4), 4.0, 'seg_${i}_x'));
+        if (i < 49) cleanMulti.writeln('#EXT-X-DISCONTINUITY');
+      }
+      cleanMulti.writeln('#EXT-X-ENDLIST');
+      final a2 = HlsAdFilter.analyzeAdRanges(cleanMulti.toString());
+      expect(a2.ranges, isEmpty);
+
+      // Repeated identical ad URIs inside multi-discontinuity stream + trailing empty disc
+      final ikunMulti = StringBuffer()..writeln('#EXTM3U');
+      for (var i = 0; i < 12; i++) {
+        if (i == 2 || i == 7 || i == 11) {
+          ikunMulti.write(segBlock(6, 2.94, '20261118/ad/seg'));
+        } else {
+          ikunMulti.write(segBlock(12, 3.2, '20240430/main/m_${i}_'));
+        }
+        ikunMulti.writeln('#EXT-X-DISCONTINUITY');
+      }
+      ikunMulti.writeln('#EXT-X-ENDLIST');
+      final a3 = HlsAdFilter.analyzeAdRanges(ikunMulti.toString());
+      expect(a3.chunks[2].ad, true);
+      expect(a3.chunks[7].ad, true);
+      expect(a3.chunks[11].ad, true);
+      final c3 = HlsAdFilter.buildCutPlaylist(ikunMulti.toString(), a3);
+      expect(c3.text.contains('#EXT-X-DISCONTINUITY\n#EXT-X-ENDLIST'), false);
+    });
+
+    test('LocalHttpServer.sanitizeHeaders preserves custom spider auth headers', () {
+      final cleaned = LocalHttpServer.sanitizeHeaders({
+        'User-Agent': 'Mozi',
+        'Badci': 'e33f120e719bb723bca70658af09ea2b',
+        'Host': 'evil.example.com',
+        'Referer': 'https://site.example/\r\nX-Inject: 1',
+      });
+      expect(cleaned['User-Agent'], 'Mozi');
+      expect(cleaned['Badci'], 'e33f120e719bb723bca70658af09ea2b');
+      expect(cleaned.containsKey('Host'), false);
+      expect(cleaned['Referer']?.contains('\n'), false);
+    });
   });
 
   group('TvboxDb', () {

@@ -95,28 +95,35 @@ class LocalHttpServer {
     }
   }
 
-  static const _headerAllow = {
-    'referer',
-    'origin',
-    'user-agent',
-    'cookie',
-    'accept',
-    'accept-language',
-    'authorization',
-    'x-requested-with',
+  static const _headerDeny = {
+    'host',
+    'content-length',
+    'connection',
+    'keep-alive',
+    'transfer-encoding',
+    'te',
+    'trailer',
+    'upgrade',
+    'proxy-connection',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'range',
   };
 
   static Map<String, String> sanitizeHeaders(Map<String, String>? extra) {
     final out = <String, String>{'User-Agent': desktopUa};
     if (extra == null) return out;
     extra.forEach((k, v) {
-      final lower = k.toLowerCase();
-      if (_headerAllow.contains(lower)) {
-        final clean = v.replaceAll(RegExp(r'[\r\n]'), ' ');
-        if (clean.isNotEmpty) {
-          out.removeWhere((ek, _) => ek.toLowerCase() == lower);
-          out[k] = clean.length > 2048 ? clean.substring(0, 2048) : clean;
-        }
+      final lower = k.trim().toLowerCase();
+      if (lower.isEmpty ||
+          _headerDeny.contains(lower) ||
+          !RegExp(r'^[a-z0-9-]+$').hasMatch(lower)) {
+        return;
+      }
+      final clean = v.replaceAll(RegExp(r'[\r\n]'), ' ').trim();
+      if (clean.isNotEmpty) {
+        out.removeWhere((ek, _) => ek.toLowerCase() == lower);
+        out[k.trim()] = clean.length > 2048 ? clean.substring(0, 2048) : clean;
       }
     });
     return out;
@@ -389,6 +396,38 @@ class LocalHttpServer {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
+  static String _pickBestVariant(String masterText) {
+    final lines = masterText.split(RegExp(r'\r?\n'));
+    var bestUri = '';
+    var bestBw = -1;
+    var firstUri = '';
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      if (!RegExp(r'^#EXT-X-STREAM-INF', caseSensitive: false).hasMatch(line)) {
+        continue;
+      }
+      var bw = 0;
+      final bwMatch = RegExp(r'BANDWIDTH=(\d+)').firstMatch(line);
+      if (bwMatch != null) {
+        bw = int.tryParse(bwMatch.group(1) ?? '0') ?? 0;
+      }
+      var variant = '';
+      for (var j = i + 1; j < lines.length; j++) {
+        final l = lines[j].trim();
+        if (l.isEmpty || l.startsWith('#')) continue;
+        variant = l;
+        break;
+      }
+      if (variant.isEmpty) continue;
+      if (firstUri.isEmpty) firstUri = variant;
+      if (bw > bestBw) {
+        bestBw = bw;
+        bestUri = variant;
+      }
+    }
+    return bestUri.isNotEmpty ? bestUri : firstUri;
+  }
+
   static Future<({String text, String finalUrl})> _fetchPlaylistMaybeMaster(
     String url,
     Map<String, String>? headers,
@@ -425,21 +464,7 @@ class LocalHttpServer {
 
       if (RegExp(r'#EXT-X-STREAM-INF', caseSensitive: false).hasMatch(text) &&
           !RegExp(r'#EXTINF', caseSensitive: false).hasMatch(text)) {
-        final lines = text.split(RegExp(r'\r?\n'));
-        var variant = '';
-        for (var i = 0; i < lines.length; i++) {
-          if (!RegExp(r'^#EXT-X-STREAM-INF', caseSensitive: false)
-              .hasMatch(lines[i])) {
-            continue;
-          }
-          for (var j = i + 1; j < lines.length; j++) {
-            final l = lines[j].trim();
-            if (l.isEmpty || l.startsWith('#')) continue;
-            variant = l;
-            break;
-          }
-          if (variant.isNotEmpty) break;
-        }
+        final variant = _pickBestVariant(text);
         if (variant.isEmpty) return (text: text, finalUrl: finalUrl);
         try {
           cur = Uri.parse(finalUrl).resolve(variant).toString();
@@ -490,10 +515,8 @@ class LocalHttpServer {
         } catch (_) {}
         if (analysis.duration >= 30) break;
       }
-      if (analysis.duration < 30) {
-        throw Exception(
-          '源返回的是广告/占位播放列表（仅 ${analysis.duration.round()} 秒），稍后重试或换源',
-        );
+      if (analysis.chunks.every((c) => c.n == 0)) {
+        throw Exception('源返回了空播放列表，稍后重试或换源');
       }
     }
 
@@ -560,8 +583,9 @@ class LocalHttpServer {
     String url, {
     Map<String, String>? headers,
     int depth = 0,
+    bool forceHls = false,
   }) async {
-    if (!RegExp(r'\.m3u8', caseSensitive: false).hasMatch(url)) {
+    if (!forceHls && !RegExp(r'\.m3u8', caseSensitive: false).hasMatch(url)) {
       return const ProbeResult();
     }
     final cacheKey = '$url|${jsonEncode(headers ?? const {})}';
@@ -582,26 +606,16 @@ class LocalHttpServer {
       if (depth < 3 &&
           RegExp(r'#EXT-X-STREAM-INF', caseSensitive: false).hasMatch(t) &&
           !RegExp(r'#EXTINF', caseSensitive: false).hasMatch(t)) {
-        final lines = t.split(RegExp(r'\r?\n'));
-        var variant = '';
-        for (var i = 0; i < lines.length; i++) {
-          if (!RegExp(r'^#EXT-X-STREAM-INF', caseSensitive: false)
-              .hasMatch(lines[i])) {
-            continue;
-          }
-          for (var j = i + 1; j < lines.length; j++) {
-            final l = lines[j].trim();
-            if (l.isEmpty || l.startsWith('#')) continue;
-            variant = l;
-            break;
-          }
-          if (variant.isNotEmpty) break;
-        }
+        final variant = _pickBestVariant(t);
         if (variant.isNotEmpty) {
           try {
             final abs = Uri.parse(url).resolve(variant).toString();
-            final sub =
-                await probePlaylist(abs, headers: headers, depth: depth + 1);
+            final sub = await probePlaylist(
+              abs,
+              headers: headers,
+              depth: depth + 1,
+              forceHls: true,
+            );
             if (sub.error == null) {
               final res = ProbeResult(
                 disc: sub.disc,

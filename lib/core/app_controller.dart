@@ -95,7 +95,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.22',
+    this.version = '3.18.23',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -163,7 +163,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.22',
+      current: '3.18.23',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -1980,8 +1980,14 @@ class AppController extends StateNotifier<AppState> {
     HlsProxyResult? hlsResult;
     var isHls = RegExp(r'\.m3u8', caseSensitive: false).hasMatch(finalUrl);
 
-    if (!isHls && fromSpider) {
-      final kind = await LocalHttpServer.sniffMedia(finalUrl, headers: _mediaHeaders);
+    if (!isHls &&
+        RegExp(r'^https?://', caseSensitive: false).hasMatch(finalUrl) &&
+        !RegExp(
+          r'\.(mp4|flv|mkv|ts|webm|mp3|m4a)(\?|#|$)',
+          caseSensitive: false,
+        ).hasMatch(finalUrl)) {
+      final kind =
+          await LocalHttpServer.sniffMedia(finalUrl, headers: _mediaHeaders);
       if (myToken != _playToken) return;
       if (kind == 'hls') isHls = true;
     }
@@ -2100,7 +2106,7 @@ class AppController extends StateNotifier<AppState> {
           unawaited(refreshTracks());
         }
       });
-      unawaited(_probeAndWarn(finalUrl, myToken));
+      unawaited(_probeAndWarn(finalUrl, myToken, hlsResult: hlsResult, isHls: isHls));
     } catch (e) {
       if (myToken == _playToken) {
         showToast('mpv 启动失败：$e', 5000);
@@ -2108,9 +2114,31 @@ class AppController extends StateNotifier<AppState> {
     }
   }
 
-  Future<void> _probeAndWarn(String url, int myToken) async {
-    if (!url.contains('.m3u8')) return;
-    final p = await LocalHttpServer.probePlaylist(url, headers: _mediaHeaders);
+  Future<void> _probeAndWarn(
+    String url,
+    int myToken, {
+    HlsProxyResult? hlsResult,
+    bool isHls = false,
+  }) async {
+    if (hlsResult != null) {
+      if (myToken != _playToken || !state.playerOpen) return;
+      final totalSegs =
+          hlsResult.chunks.fold<int>(0, (sum, c) => sum + c.n);
+      state = state.copyWith(
+        lastProbe: ProbeResult(
+          disc: hlsResult.totalChunks > 0 ? hlsResult.totalChunks - 1 : 0,
+          segments: totalSegs,
+          duration: hlsResult.sourceDuration.round(),
+        ),
+      );
+      return;
+    }
+    if (!isHls && !url.contains('.m3u8')) return;
+    final p = await LocalHttpServer.probePlaylist(
+      url,
+      headers: _mediaHeaders,
+      forceHls: isHls,
+    );
     if (myToken != _playToken || !state.playerOpen) return;
     state = state.copyWith(lastProbe: p);
   }
