@@ -1,7 +1,7 @@
 name: kimbox_tv
 description: "KimBoxTV - 基于 TVBox / FongMi 协议的 Windows PC 桌面影音播放客户端"
 publish_to: 'none'
-version: 3.18.25+1
+version: 3.18.26+1
 
 environment:
   sdk: ^3.13.3

@@ -625,7 +625,7 @@ void main() {
     testWidgets(
         'PlayerView dispose clears native callbacks, hides viewport, and avoids ref errors',
         (tester) async {
-      tester.view.physicalSize = const Size(1460, 920);
+      tester.view.physicalSize = const Size(1024, 640);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -657,6 +657,8 @@ void main() {
         ),
       );
       await tester.pump();
+      expect(find.text('主页'), findsOneWidget);
+      expect(find.byIcon(Icons.bug_report_outlined), findsOneWidget);
       expect(ctrl.mpvService.onNativeTap, isNotNull);
       expect(ctrl.mpvService.onNativeDoubleTap, isNotNull);
 

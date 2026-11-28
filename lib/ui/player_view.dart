@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ui' as ui;
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -303,10 +302,6 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
       });
     }
 
-    final metaLine = detail == null
-        ? ''
-        : '${detail.year} · ${detail.area} · ${detail.typeName}';
-
     final isNative = st.renderEngine == 'native';
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && context.mounted) {
@@ -327,10 +322,6 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
           color: Colors.black,
           child: Column(
             children: [
-              // 顶部操作栏（全屏时隐藏）
-              if (!st.isFullscreen)
-                _buildTopBar(context, st, ctrl, detail, metaLine),
-
               // 主舞台（视频 + 浮层 + 全屏浮动控制条）
               Expanded(
                 child: LayoutBuilder(
@@ -373,7 +364,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                         // 广告调试面板（仅纹理模式，原生模式下始终用 ASS 叠加）
                         if (st.adDebugVisible && !isNative)
                           Positioned(
-                            top: 56,
+                            top: 40,
                             right: 14,
                             child: _AdDebugPanel(st: st, ctrl: ctrl),
                           ),
@@ -519,145 +510,6 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
     } else {
       unawaited(mpv.setNativeOsdOverlay(3, ''));
     }
-  }
-
-  Widget _buildTopBar(
-    BuildContext context,
-    AppState st,
-    AppController ctrl,
-    VideoDetail? detail,
-    String metaLine,
-  ) {
-    final playerItems = st.externalPlayers.isEmpty
-        ? const [KimSelectItem<String>(value: '', label: '未装播放器')]
-        : st.externalPlayers
-            .map((p) => KimSelectItem<String>(
-                  value: p.id,
-                  label: p.name + (p.hasUi ? '' : '（无界面）'),
-                ))
-            .toList();
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-      decoration: const BoxDecoration(
-        color: KimTheme.headerBg,
-        border: Border(bottom: BorderSide(color: KimTheme.border)),
-      ),
-      child: Row(
-        children: [
-          KimButton(
-            label: '← 返回列表',
-            variant: KimButtonVariant.ghost,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-            onPressed: ctrl.closePlayer,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  detail?.vodName ?? '加载中...',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w700),
-                ),
-                if (metaLine.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    metaLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 12, color: KimTheme.textMuted),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              KimButton(
-                variant: KimButtonVariant.secondary,
-                tooltip: '开启/关闭插播广告拦截（关闭后完全用源原始列表）',
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                onPressed: () => ctrl.toggleAdFilter(!st.adFilterEnabled),
-                child: Text(
-                  st.adFilterEnabled ? '广告拦截：开' : '广告拦截：关',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: st.adFilterEnabled
-                        ? Colors.white
-                        : KimTheme.warnOrange,
-                  ),
-                ),
-              ),
-              KimDropdown<String>(
-                value: st.adMode,
-                items: const [
-                  KimSelectItem(value: 'cut', label: '广告：剪辑'),
-                  KimSelectItem(value: 'skip', label: '广告：跳过'),
-                ],
-                fontSize: 12,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                tooltip: '广告处理方式：\n· 剪辑：直接删掉广告分片、重算播放列表（默认）\n· 跳过：保留源列表，播到广告处自动跳走',
-                onChanged: (v) {
-                  if (v != null) ctrl.changeAdMode(v);
-                },
-              ),
-              KimButton(
-                label: '🐞 调试',
-                variant: KimButtonVariant.secondary,
-                tooltip: '显示检测到的广告区间、跳转目标与分块结构（快捷键 D）',
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                onPressed: () => ctrl.toggleAdDebug(),
-              ),
-              _FavTopBtn(
-                faved: detail?.favorited ?? false,
-                onPressed: ctrl.toggleCurrentFavorite,
-              ),
-              KimButton(
-                label: '⛶ 全屏 (F)',
-                variant: KimButtonVariant.secondary,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                onPressed: ctrl.toggleFullscreen,
-              ),
-              KimDropdown<String>(
-                value: st.selectedExternalPlayerId,
-                items: playerItems,
-                fontSize: 12,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                tooltip: '选择外部播放器',
-                onChanged: st.externalPlayers.isEmpty
-                    ? null
-                    : (v) {
-                        if (v != null) ctrl.setExternalPlayer(v);
-                      },
-              ),
-              KimButton(
-                label: '🚀 用 PC 播放器播放',
-                variant: KimButtonVariant.primary,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                onPressed: ctrl.playWithExternalPlayer,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   ({String topLeft, String topRight, String bottomLeft, String bottomRight})
@@ -892,6 +744,12 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
       ),
       child: Row(
         children: [
+          _CtrlLabelButton(
+            label: '主页',
+            tooltip: '返回列表主页 (Esc)',
+            onTap: ctrl.closePlayer,
+          ),
+          const SizedBox(width: 4),
           _CtrlIconButton(
             icon: Icons.skip_previous,
             tooltip: '上一集',
@@ -963,7 +821,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             onTap: () => ctrl.mpvService.toggleMute(),
           ),
           SizedBox(
-            width: 112,
+            width: 92,
             child: _CustomSeekSlider(
               value: volPct,
               onDrag: (p) {
@@ -1018,14 +876,29 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             tooltip: '重新加载当前集（从当前位置继续）',
             onTap: ctrl.reloadCurrentEpisode,
           ),
+          _CtrlIconButton(
+            icon: st.adDebugVisible
+                ? Icons.bug_report
+                : Icons.bug_report_outlined,
+            tooltip: '广告与渲染调试 (D)',
+            color: st.adDebugVisible ? KimTheme.cyanText : null,
+            onTap: () => ctrl.toggleAdDebug(),
+          ),
+          _CtrlTextButton(
+            text: (detail?.favorited ?? false) ? '★' : '☆',
+            tooltip: (detail?.favorited ?? false) ? '已收藏（点击取消）' : '收藏本片',
+            color: (detail?.favorited ?? false) ? KimTheme.starGold : null,
+            onTap: ctrl.toggleCurrentFavorite,
+          ),
           _CtrlTextButton(
             text: 'ⓘ',
-            tooltip: '信息层 (i)',
+            tooltip: '信息层 (I)',
+            color: st.osdVisible ? KimTheme.cyanText : null,
             onTap: ctrl.toggleOsd,
           ),
           _CtrlIconButton(
-            icon: Icons.fullscreen,
-            tooltip: '全屏 (F)',
+            icon: st.isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+            tooltip: st.isFullscreen ? '退出全屏 (F)' : '全屏 (F)',
             onTap: ctrl.toggleFullscreen,
           ),
         ],
@@ -1058,11 +931,24 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             st.currentSourceIdx < detail.playSources.length)
         ? detail.playSources[st.currentSourceIdx]
         : null;
-    final label = curSource != null
+    final epMeta = curSource != null
         ? '选集 · ${curSource.sourceName} · 共 ${curSource.episodes.length} 集'
         : '选集';
+    final titleText = detail?.vodName ?? '加载中...';
+    final metaLine = detail == null
+        ? ''
+        : [detail.year, detail.area, detail.typeName]
+            .where((s) => s.trim().isNotEmpty)
+            .join(' · ');
+    final playerItems = st.externalPlayers.isEmpty
+        ? const [KimSelectItem<String>(value: '', label: '未装播放器')]
+        : st.externalPlayers
+            .map((p) => KimSelectItem<String>(
+                  value: p.id,
+                  label: p.name + (p.hasUi ? '' : '（无界面）'),
+                ))
+            .toList();
 
-    final subs = st.tracks.where((t) => t.type == 'sub').toList();
     final auds = st.tracks.where((t) => t.type == 'audio').toList();
     final jvm = st.jvmStatus;
     final plText = jvm.preloadTotal > 0
@@ -1091,12 +977,40 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                      fontSize: 13, color: KimTheme.textMuted),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: titleText,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (metaLine.isNotEmpty)
+                          TextSpan(
+                            text: '  ($metaLine)',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: KimTheme.textMuted,
+                            ),
+                          ),
+                        TextSpan(
+                          text: '  ·  $epMeta',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: KimTheme.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 12),
                 KimButton(
                   label: st.panelCollapsed ? '展开 ▾' : '收起 ▴',
                   variant: KimButtonVariant.ghost,
@@ -1272,8 +1186,23 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                         ),
                         _CheckOption(
                           value: st.adFilterEnabled,
-                          label: '拦截插播广告（默认开启；按区间自动跳过）',
+                          label: '拦截插播广告（默认开启）',
                           onChanged: ctrl.toggleAdFilter,
+                        ),
+                        KimDropdown<String>(
+                          value: st.adMode,
+                          items: const [
+                            KimSelectItem(value: 'cut', label: '广告：剪辑'),
+                            KimSelectItem(value: 'skip', label: '广告：跳过'),
+                          ],
+                          fontSize: 12,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          tooltip:
+                              '广告处理方式：\n· 剪辑：直接删掉广告分片、重算播放列表（默认）\n· 跳过：保留源列表，播到广告处自动跳走',
+                          onChanged: (v) {
+                            if (v != null) ctrl.changeAdMode(v);
+                          },
                         ),
                         _LabeledOptionDropdown<int>(
                           label: '缓冲',
@@ -1308,7 +1237,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                           value: st.renderEngine,
                           items: const [
                             KimSelectItem(value: 'native', label: '原生直出（低开销）'),
-                            KimSelectItem(value: 'texture', label: '纹理兼容（兜底）'),
+                            KimSelectItem(value: 'texture', label: '纹理兼容（高开销）'),
                           ],
                           onChanged: (v) {
                             if (v != null) unawaited(ctrl.saveRenderEngine(v));
@@ -1355,7 +1284,7 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                     const Padding(
                       padding: EdgeInsets.only(top: 8, bottom: 4),
                       child: Text(
-                        '字幕 / 音轨（mpv 模式）：',
+                        '音轨 / 外部播放器：',
                         style:
                             TextStyle(fontSize: 12, color: KimTheme.textMuted),
                       ),
@@ -1365,26 +1294,6 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                       runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        KimDropdown<String>(
-                          value: subs.any((s) => s.id == st.currentSubId)
-                              ? st.currentSubId
-                              : 'no',
-                          items: [
-                            const KimSelectItem(value: 'no', label: '关闭字幕'),
-                            ...subs.map((t) => KimSelectItem(
-                                  value: t.id,
-                                  label:
-                                      '${t.title.isNotEmpty ? t.title : (t.lang.isNotEmpty ? t.lang : '字幕 ${t.id}')}${t.external ? '（外挂）' : ''}',
-                                )),
-                          ],
-                          minWidth: 150,
-                          maxWidth: 260,
-                          fontSize: 12,
-                          tooltip: '字幕',
-                          onChanged: (v) {
-                            if (v != null) ctrl.changeSubTrack(v);
-                          },
-                        ),
                         KimDropdown<String>(
                           value: auds.any((a) => a.id == st.currentAudioId)
                               ? st.currentAudioId
@@ -1415,23 +1324,26 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
                                   }
                                 },
                         ),
-                        KimButton(
-                          label: '＋ 外挂字幕',
-                          variant: KimButtonVariant.ghost,
+                        KimDropdown<String>(
+                          value: st.selectedExternalPlayerId,
+                          items: playerItems,
                           fontSize: 12,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          onPressed: () async {
-                            const typeGroup = XTypeGroup(
-                              label: '字幕',
-                              extensions: ['srt', 'ass', 'ssa', 'vtt', 'sub'],
-                            );
-                            final file = await openFile(
-                                acceptedTypeGroups: [typeGroup]);
-                            if (file != null) {
-                              await ctrl.addExternalSubtitle(file.path);
-                            }
-                          },
+                              horizontal: 8, vertical: 5),
+                          tooltip: '选择外部播放器',
+                          onChanged: st.externalPlayers.isEmpty
+                              ? null
+                              : (v) {
+                                  if (v != null) ctrl.setExternalPlayer(v);
+                                },
+                        ),
+                        KimButton(
+                          label: '🚀 用 PC 播放器播放',
+                          variant: KimButtonVariant.primary,
+                          fontSize: 12,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          onPressed: ctrl.playWithExternalPlayer,
                         ),
                       ],
                     ),
@@ -1446,38 +1358,6 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
               ),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _FavTopBtn extends StatelessWidget {
-  final bool faved;
-  final VoidCallback onPressed;
-
-  const _FavTopBtn({required this.faved, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          decoration: BoxDecoration(
-            color: faved ? const Color(0xFF4A3A10) : KimTheme.secondaryBtn,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            faved ? '★ 已收藏' : '☆ 收藏',
-            style: TextStyle(
-              color: faved ? KimTheme.starGold : Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -1772,12 +1652,14 @@ class _CtrlIconButton extends StatefulWidget {
   final String tooltip;
   final VoidCallback onTap;
   final bool enabled;
+  final Color? color;
 
   const _CtrlIconButton({
     required this.icon,
     required this.tooltip,
     required this.onTap,
     this.enabled = true,
+    this.color,
   });
 
   @override
@@ -1789,6 +1671,7 @@ class _CtrlIconButtonState extends State<_CtrlIconButton> {
 
   @override
   Widget build(BuildContext context) {
+    final fg = widget.color ?? Colors.white;
     return Tooltip(
       message: widget.tooltip,
       child: MouseRegion(
@@ -1812,9 +1695,7 @@ class _CtrlIconButtonState extends State<_CtrlIconButton> {
             child: Icon(
               widget.icon,
               size: 19,
-              color: widget.enabled
-                  ? Colors.white
-                  : Colors.white.withValues(alpha: 0.35),
+              color: widget.enabled ? fg : fg.withValues(alpha: 0.35),
             ),
           ),
         ),
@@ -1827,11 +1708,13 @@ class _CtrlTextButton extends StatefulWidget {
   final String text;
   final String tooltip;
   final VoidCallback onTap;
+  final Color? color;
 
   const _CtrlTextButton({
     required this.text,
     required this.tooltip,
     required this.onTap,
+    this.color,
   });
 
   @override
@@ -1863,7 +1746,61 @@ class _CtrlTextButtonState extends State<_CtrlTextButton> {
             alignment: Alignment.center,
             child: Text(
               widget.text,
-              style: const TextStyle(color: Colors.white, fontSize: 17),
+              style: TextStyle(color: widget.color ?? Colors.white, fontSize: 17),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CtrlLabelButton extends StatefulWidget {
+  final String label;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _CtrlLabelButton({
+    required this.label,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  State<_CtrlLabelButton> createState() => _CtrlLabelButtonState();
+}
+
+class _CtrlLabelButtonState extends State<_CtrlLabelButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? Colors.white.withValues(alpha: 0.18)
+                  : Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              widget.label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),

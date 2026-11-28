@@ -21,11 +21,12 @@ function Invoke-KimBoxStageRelease {
     $releaseDir = Join-Path $Root 'build\windows\x64\runner\Release'
     $iconSrc = Join-Path $Root 'windows\runner\resources\app_icon.ico'
 
-    # 1) Release 构建
+    # 1) Release 构建（清理 flutter_assets / flutter_build 缓存以防 MaterialIcons 增量裁剪漏掉新图标）
     if (-not $SkipBuild) {
         Write-Host '[构建] 正在执行 flutter build windows --release ...' -ForegroundColor Cyan
         Push-Location $Root
         try {
+            Remove-Item -Recurse -Force (Join-Path $Root 'build\flutter_assets'), (Join-Path $releaseDir 'data\flutter_assets'), (Join-Path $Root '.dart_tool\flutter_build') -ErrorAction SilentlyContinue
             & flutter build windows --release
             if ($LASTEXITCODE -ne 0) {
                 throw 'flutter build windows --release 失败'

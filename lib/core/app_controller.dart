@@ -99,7 +99,7 @@ class AppState {
   final String bossKeyShortcut;
 
   const AppState({
-    this.version = '3.18.25',
+    this.version = '3.18.26',
     required this.startedAt,
     this.configs = const [],
     this.currentConfigId,
@@ -169,7 +169,7 @@ class AppState {
       lastError: '',
     ),
     this.updateStatus = const UpdateStatusSnapshot(
-      current: '3.18.25',
+      current: '3.18.26',
       mode: 'portable',
       checking: false,
       lastCheck: 0,
@@ -2664,24 +2664,50 @@ class AppController extends StateNotifier<AppState> {
 
   /* ==================== 播放设置 / 调试 / 轨道 / 外部播放器 ==================== */
 
-  void toggleAdFilter(bool on) {
+  Future<void> _reloadActiveEpisodeWithLabel(String prefix) async {
+    final cur = _activePlayItem(
+        state.currentDetail, state.currentSourceIdx, state.currentEpIdx);
+    if (!state.playerOpen || cur == null) {
+      showToast(prefix, 2500);
+      return;
+    }
+    final resumePos = resolveActivePlaybackPosition(
+      currentPos: state.mpv.position,
+      lastGoodPos: _lastGoodPos,
+    );
+    saveHistory(force: true);
+    showToast(
+      resumePos > 1
+          ? '$prefix（从 ${fmtTime(resumePos)} 重载当前集）'
+          : '$prefix（正在重载当前集）',
+      3200,
+    );
+    await playEpisode(cur.episode.url, resumeAt: resumePos);
+  }
+
+  Future<void> toggleAdFilter(bool on) async {
+    if (on == state.adFilterEnabled) return;
     _prefs.setString('tvbox_adfilter', on ? '1' : '0');
     state = state.copyWith(adFilterEnabled: on);
-    showToast(
-      on ? '已开启广告拦截（重新打开该集生效）' : '已关闭广告拦截，将使用源原始列表（最稳）',
-      3000,
+    await _reloadActiveEpisodeWithLabel(
+      on ? '已开启广告拦截' : '已关闭广告拦截（使用源原始列表）',
     );
   }
 
-  void changeAdMode(String mode) {
+  Future<void> changeAdMode(String mode) async {
     final m = mode == 'cut' ? 'cut' : 'skip';
+    if (m == state.adMode) return;
     _prefs.setString('tvbox_admode', m);
     state = state.copyWith(adMode: m);
-    showToast(
-      m == 'cut'
-          ? '已切到「剪辑」：重新打开该集生效（直接把广告分片删掉，无跳转卡顿）'
-          : '已切到「跳过」：重新打开该集生效（播到广告处自动跳走，最稳）',
-      3400,
+    if (!state.adFilterEnabled) {
+      showToast(
+        m == 'cut' ? '已设为「剪辑」模式（开启广告拦截后生效）' : '已设为「跳过」模式（开启广告拦截后生效）',
+        2800,
+      );
+      return;
+    }
+    await _reloadActiveEpisodeWithLabel(
+      m == 'cut' ? '已切到「剪辑」模式' : '已切到「跳过」模式',
     );
   }
 
@@ -2745,38 +2771,8 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(hwdecMode: mode);
     const labels = {'auto': '自动（优先硬解）', 'hw': '强制硬解', 'sw': '软解（CPU）'};
     final label = labels[mode] ?? mode;
-
-    final detail = state.currentDetail;
-    final source = (detail != null &&
-            state.currentSourceIdx >= 0 &&
-            state.currentSourceIdx < detail.playSources.length)
-        ? detail.playSources[state.currentSourceIdx]
-        : null;
-    final ep = (source != null &&
-            state.currentEpIdx >= 0 &&
-            state.currentEpIdx < source.episodes.length)
-        ? source.episodes[state.currentEpIdx]
-        : null;
-
-    if (state.playerOpen && ep != null) {
-      final resumePos = resolveActivePlaybackPosition(
-        currentPos: state.mpv.position,
-        lastGoodPos: _lastGoodPos,
-      );
-      saveHistory(force: true);
-      await mpvService.setHwdecMode(mode);
-      showToast(
-        resumePos > 1
-            ? '解码方式：$label（从 ${fmtTime(resumePos)} 重载当前集）'
-            : '解码方式：$label（正在重载当前集）',
-        3200,
-      );
-      await playEpisode(ep.url, resumeAt: resumePos);
-      return;
-    }
-
     await mpvService.setHwdecMode(mode);
-    showToast('解码方式：$label', 2500);
+    await _reloadActiveEpisodeWithLabel('解码方式：$label');
   }
 
   void saveRenderRes(String res) {
@@ -2803,47 +2799,13 @@ class AppController extends StateNotifier<AppState> {
     _prefs.setString('tvbox_render_engine', next);
     const labels = {
       'native': '原生直出 (vo=gpu)',
-      'texture': '纹理兼容 (ANGLE/兜底)',
+      'texture': '纹理兼容 (ANGLE/高开销)',
     };
     final label = labels[next] ?? next;
 
-    final detail = state.currentDetail;
-    final source = (detail != null &&
-            state.currentSourceIdx >= 0 &&
-            state.currentSourceIdx < detail.playSources.length)
-        ? detail.playSources[state.currentSourceIdx]
-        : null;
-    final ep = (source != null &&
-            state.currentEpIdx >= 0 &&
-            state.currentEpIdx < source.episodes.length)
-        ? source.episodes[state.currentEpIdx]
-        : null;
-
-    final resumePos = (state.playerOpen && ep != null)
-        ? resolveActivePlaybackPosition(
-            currentPos: state.mpv.position,
-            lastGoodPos: _lastGoodPos,
-          )
-        : 0.0;
-    if (state.playerOpen && ep != null) {
-      saveHistory(force: true);
-    }
-
     await mpvService.setRenderEngine(next);
     state = state.copyWith(renderEngine: next);
-
-    if (state.playerOpen && ep != null) {
-      showToast(
-        resumePos > 1
-            ? '渲染引擎：$label（从 ${fmtTime(resumePos)} 重载当前集）'
-            : '渲染引擎：$label（正在重载当前集）',
-        3200,
-      );
-      await playEpisode(ep.url, resumeAt: resumePos);
-      return;
-    }
-
-    showToast('渲染引擎：$label', 2500);
+    await _reloadActiveEpisodeWithLabel('渲染引擎：$label');
   }
 
   Future<void> refreshTracks() async {
