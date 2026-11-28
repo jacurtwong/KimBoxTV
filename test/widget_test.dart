@@ -330,6 +330,17 @@ void main() {
           CategoryFilterService.defaultBlock,
           containsAll(['电影', '电影片', '连续剧', '综艺片', '动漫片']),
         );
+
+        final saved = CategoryFilterService.saveBlockList(['少儿', '综艺', '少儿']);
+        expect(saved.ok, true);
+        expect(saved.blockCount, 2);
+        expect(CategoryFilterService.isBlockedCategoryName('少儿动漫', apiSite), true);
+        expect(CategoryFilterService.isBlockedCategoryName('电影', apiSite), false);
+
+        final cleared = CategoryFilterService.saveBlockList(const []);
+        expect(cleared.ok, true);
+        expect(cleared.blockCount, 0);
+        expect(CategoryFilterService.isBlockedCategoryName('少儿动漫', apiSite), false);
       } finally {
         try {
           tmp.deleteSync(recursive: true);

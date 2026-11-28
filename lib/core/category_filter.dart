@@ -142,6 +142,45 @@ class CategoryFilterService {
     );
   }
 
+  /// Persists updated global [block] keywords to `category-filter.json`
+  /// while preserving existing `allow` and per-site overrides.
+  static CategoryFilterStatus saveBlockList(List<String> block) {
+    final cur = load();
+    final seen = <String>{};
+    final cleaned = <String>[];
+    for (final raw in block) {
+      final t = raw.trim();
+      if (t.isEmpty) continue;
+      final key = t.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+      if (seen.add(key)) {
+        cleaned.add(t);
+        if (cleaned.length >= 500) break;
+      }
+    }
+
+    final file = File(AppPaths.categoryFilterFile);
+    try {
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert({
+        'version': 1,
+        '_说明': '分类过滤规则：block 里的词只要出现在分类名中就不显示；allow 优先于 block；sites 可按站点 key 或 api 覆盖。',
+        'block': cleaned,
+        'allow': cur.allow,
+        'sites': cur.sites,
+      }));
+      _cachedMtime = file.statSync().modified;
+      _cachedConfig = CategoryFilterConfig(
+        block: cleaned,
+        allow: cur.allow,
+        sites: cur.sites,
+      );
+      _lastError = null;
+    } catch (e) {
+      _lastError = '保存失败：$e';
+    }
+    return status();
+  }
+
   static Future<void> openFileInExplorer() async {
     await Process.start(
       'explorer.exe',

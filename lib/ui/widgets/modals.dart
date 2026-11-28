@@ -766,56 +766,6 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
                 ],
               ),
               const SizedBox(height: 10),
-              // 分类过滤
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    _catFilter.ok
-                        ? '分类过滤（仅 API 站点）：${_catFilter.blockCount} 条屏蔽 · ${_catFilter.allowCount} 条白名单${_catFilter.sitesCount > 0 ? ' · ${_catFilter.sitesCount} 个站点覆盖' : ''}'
-                        : '分类过滤：${_catFilter.error}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _catFilter.ok
-                          ? KimTheme.textMuted
-                          : const Color(0xFFFF8A8A),
-                    ),
-                  ),
-                  KimButton(
-                    label: '打开文件',
-                    variant: KimButtonVariant.ghost,
-                    fontSize: 12,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    onPressed: () async {
-                      await CategoryFilterService.openFileInExplorer();
-                      ctrl.showToast(
-                          '已打开 category-filter.json，改完点「重新加载」', 4000);
-                    },
-                  ),
-                  KimButton(
-                    label: '重新加载',
-                    variant: KimButtonVariant.ghost,
-                    fontSize: 12,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    onPressed: () {
-                      final s = CategoryFilterService.status(reload: true);
-                      setState(() => _catFilter = s);
-                      ctrl.showToast(
-                        s.ok
-                            ? '已重新加载：${s.blockCount} 条屏蔽 · ${s.allowCount} 条白名单'
-                            : '重新加载失败：${s.error}',
-                        4000,
-                      );
-                      ctrl.loadHome();
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
               // 站源服务 (JVM)
               Wrap(
                 spacing: 8,
@@ -904,6 +854,21 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
                       onPressed: () => showBossKeyDialog(context),
                     ),
                     KimButton(
+                      label: '分类过滤',
+                      variant: KimButtonVariant.secondary,
+                      fontSize: 12,
+                      tooltip:
+                          '当前 ${_catFilter.blockCount} 条屏蔽关键字（仅 API 站点生效，点击可视化管理）',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      onPressed: () async {
+                        final saved = await showCategoryFilterDialog(context);
+                        if (saved == true && mounted) {
+                          setState(_refreshLocalStats);
+                        }
+                      },
+                    ),
+                    KimButton(
                       label: '初始化',
                       variant: KimButtonVariant.ghost,
                       fontSize: 12,
@@ -926,6 +891,332 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ==================== 分类过滤关键字管理弹窗 ==================== */
+
+Future<bool?> showCategoryFilterDialog(BuildContext context) {
+  return showDialog<bool>(
+    context: context,
+    barrierColor: Colors.black.withValues(alpha: 0.72),
+    builder: (_) => const _CategoryFilterDialog(),
+  );
+}
+
+class _CategoryFilterDialog extends ConsumerStatefulWidget {
+  const _CategoryFilterDialog();
+
+  @override
+  ConsumerState<_CategoryFilterDialog> createState() =>
+      _CategoryFilterDialogState();
+}
+
+class _CategoryFilterDialogState extends ConsumerState<_CategoryFilterDialog> {
+  final TextEditingController _inputCtrl = TextEditingController();
+  late List<String> _draft;
+
+  @override
+  void initState() {
+    super.initState();
+    _draft = List<String>.from(CategoryFilterService.load(force: true).block);
+  }
+
+  @override
+  void dispose() {
+    _inputCtrl.dispose();
+    super.dispose();
+  }
+
+  void _addFromInput() {
+    final raw = _inputCtrl.text.trim();
+    if (raw.isEmpty) return;
+    final parts = raw
+        .split(RegExp(r'[,，、\r\n]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty);
+    final existing = _draft
+        .map((e) => e.replaceAll(RegExp(r'\s+'), '').toLowerCase())
+        .toSet();
+    var added = 0;
+    setState(() {
+      for (final p in parts) {
+        final key = p.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+        if (existing.add(key)) {
+          _draft.add(p);
+          added++;
+        }
+      }
+      _inputCtrl.clear();
+    });
+    if (added == 0) {
+      ref.read(appControllerProvider.notifier).showToast('该关键字已在过滤名单中', 1800);
+    }
+  }
+
+  void _removeAt(int index) {
+    setState(() => _draft.removeAt(index));
+  }
+
+  void _clearAll() {
+    setState(() => _draft.clear());
+  }
+
+  void _restoreDefault() {
+    setState(() {
+      _draft = List<String>.from(CategoryFilterService.defaultBlock);
+    });
+  }
+
+  void _save() {
+    final st = CategoryFilterService.saveBlockList(_draft);
+    final ctrl = ref.read(appControllerProvider.notifier);
+    if (!st.ok) {
+      ctrl.showToast(st.error ?? '保存分类过滤失败', 3500);
+      return;
+    }
+    ctrl.showToast('已保存 ${st.blockCount} 条分类过滤规则', 2500);
+    ctrl.loadHome();
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: KimTheme.cardBg,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: KimTheme.border),
+      ),
+      child: Container(
+        width: 600,
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '分类过滤关键字管理',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).pop(false),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.close, size: 18, color: KimTheme.textMuted),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'CMS/JSON 站点的分类名称只要包含以下任一关键字（忽略大小写与空格），将被自动隐藏。您可点击标签右上角「×」单独删除、清空或恢复系统默认。Spider 虫包站一律不过滤。',
+              style: TextStyle(
+                fontSize: 12,
+                color: KimTheme.textMuted,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _inputCtrl,
+                    onSubmitted: (_) => _addFromInput(),
+                    style: const TextStyle(fontSize: 13, color: KimTheme.text),
+                    decoration: InputDecoration(
+                      hintText: '输入要屏蔽的分类关键字（如：少儿、综艺，多个可用逗号分隔）',
+                      hintStyle: const TextStyle(
+                          color: KimTheme.textMuted, fontSize: 12),
+                      filled: true,
+                      fillColor: KimTheme.inputBg,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 11),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: KimTheme.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: KimTheme.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: KimTheme.accent),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                KimButton(
+                  label: '＋ 添加',
+                  variant: KimButtonVariant.secondary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  onPressed: _addFromInput,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Text(
+                  '生效中的过滤名单 (${_draft.length} 个)',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: KimTheme.text,
+                  ),
+                ),
+                const Spacer(),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _draft.isEmpty ? null : _clearAll,
+                    child: Text(
+                      '🗑 清空全部',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _draft.isEmpty
+                            ? KimTheme.textMuted
+                            : KimTheme.starGold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              height: 220,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: KimTheme.inputBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: KimTheme.border),
+              ),
+              child: _draft.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '当前无过滤关键字（将显示 API 站点的全部分类）',
+                        style:
+                            TextStyle(fontSize: 12, color: KimTheme.textMuted),
+                      ),
+                    )
+                  : SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (var i = 0; i < _draft.length; i++)
+                            _FilterKeywordChip(
+                              label: _draft[i],
+                              onRemove: () => _removeAt(i),
+                            ),
+                        ],
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _restoreDefault,
+                    child: Text(
+                      '↺ 恢复系统默认 (${CategoryFilterService.defaultBlock.length} 个)',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: KimTheme.starGold,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                KimButton(
+                  label: '取消',
+                  variant: KimButtonVariant.ghost,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+                const SizedBox(width: 8),
+                KimButton(
+                  label: '保存',
+                  variant: KimButtonVariant.primary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  onPressed: _save,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterKeywordChip extends StatefulWidget {
+  final String label;
+  final VoidCallback onRemove;
+
+  const _FilterKeywordChip({
+    required this.label,
+    required this.onRemove,
+  });
+
+  @override
+  State<_FilterKeywordChip> createState() => _FilterKeywordChipState();
+}
+
+class _FilterKeywordChipState extends State<_FilterKeywordChip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onRemove,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? const Color(0xFF28303B)
+                : const Color(0xFF1A2028),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: _hovered ? const Color(0xFF566375) : const Color(0xFF39424E),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                widget.label,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.close, size: 13, color: KimTheme.textMuted),
             ],
           ),
         ),
