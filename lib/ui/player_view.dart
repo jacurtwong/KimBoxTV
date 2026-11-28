@@ -747,6 +747,9 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
           _CtrlLabelButton(
             label: '主页',
             tooltip: '返回列表主页 (Esc)',
+            backgroundColor: KimTheme.accent,
+            hoverBackgroundColor: KimTheme.accentHover,
+            borderColor: KimTheme.accentHover,
             onTap: ctrl.closePlayer,
           ),
           const SizedBox(width: 4),
@@ -1759,11 +1762,17 @@ class _CtrlLabelButton extends StatefulWidget {
   final String label;
   final String tooltip;
   final VoidCallback onTap;
+  final Color? backgroundColor;
+  final Color? hoverBackgroundColor;
+  final Color? borderColor;
 
   const _CtrlLabelButton({
     required this.label,
     required this.tooltip,
     required this.onTap,
+    this.backgroundColor,
+    this.hoverBackgroundColor,
+    this.borderColor,
   });
 
   @override
@@ -1775,6 +1784,11 @@ class _CtrlLabelButtonState extends State<_CtrlLabelButton> {
 
   @override
   Widget build(BuildContext context) {
+    final bg = _hovered
+        ? (widget.hoverBackgroundColor ?? Colors.white.withValues(alpha: 0.18))
+        : (widget.backgroundColor ?? Colors.white.withValues(alpha: 0.08));
+    final border = widget.borderColor ?? Colors.white.withValues(alpha: 0.14);
+
     return Tooltip(
       message: widget.tooltip,
       child: MouseRegion(
@@ -1783,15 +1797,14 @@ class _CtrlLabelButtonState extends State<_CtrlLabelButton> {
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
           onTap: widget.onTap,
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
             height: 28,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: _hovered
-                  ? Colors.white.withValues(alpha: 0.18)
-                  : Colors.white.withValues(alpha: 0.08),
+              color: bg,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              border: Border.all(color: border),
             ),
             alignment: Alignment.center,
             child: Text(
