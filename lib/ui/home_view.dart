@@ -396,63 +396,11 @@ class _HomeViewState extends ConsumerState<HomeView>
                       KimButton(
                         label: '管理',
                         variant: KimButtonVariant.ghost,
-                        tooltip: '管理配置源（可单独删除）',
+                        tooltip: '配置源管理、备份、清理缓存、摸鱼键与初始化',
                         hasRedDot: st.hasUpdateBadge,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 8),
                         onPressed: () => showConfigManagerDialog(context),
-                      ),
-                      KimButton(
-                        label: '备份',
-                        variant: KimButtonVariant.ghost,
-                        tooltip: '备份与还原',
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        onPressed: () => showBackupPanelDialog(context),
-                      ),
-                      KimButton(
-                        label: '清理缓存',
-                        variant: KimButtonVariant.ghost,
-                        tooltip: '清理本地海报图片与临时缓存（不影响收藏与历史）',
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        onPressed: () async {
-                          final info = ctrl.getAppCacheInfo();
-                          final locText = info.path.isNotEmpty
-                              ? info.path
-                              : r'data\cache';
-                          final ok = await showKimConfirmDialog(
-                            context,
-                            title: '清理缓存',
-                            message:
-                                '检测到当前图片与运行缓存：${info.sizeMB} MB。\n\n• 存放位置：$locText\n• 说明：仅清理接口/分类快照缓存与内存海报缓存（及旧版遗留缓存），绝不影响您的配置源、收藏和播放历史。\n\n确定要立即清理缓存吗？',
-                          );
-                          if (ok && context.mounted) {
-                            final freed = ctrl.cleanAppCacheNow();
-                            await showKimConfirmDialog(
-                              context,
-                              title: '清理完成',
-                              message: '缓存清理完成！已释放约 $freed MB 磁盘空间。',
-                              alertOnly: true,
-                            );
-                          }
-                        },
-                      ),
-                      KimButton(
-                        label: '初始化',
-                        variant: KimButtonVariant.ghost,
-                        tooltip: '初始化：清空所有配置源、收藏与历史',
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        onPressed: () async {
-                          final ok = await showKimConfirmDialog(
-                            context,
-                            title: '初始化',
-                            message:
-                                '初始化将清空：\n· 所有配置源\n· 所有收藏\n· 所有播放历史\n\n确定继续吗？',
-                          );
-                          if (ok) ctrl.resetAll();
-                        },
                       ),
                       const SizedBox(width: 4),
                       // 站点切换组
@@ -557,14 +505,6 @@ class _HomeViewState extends ConsumerState<HomeView>
                           child: const Icon(Icons.refresh,
                               size: 19, color: Colors.white),
                         ),
-                      ),
-                      KimButton(
-                        label: '🐟 摸鱼键',
-                        variant: KimButtonVariant.ghost,
-                        tooltip: '摸鱼快捷键: ${st.bossKeyShortcut} (点击设置)',
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        onPressed: () => showBossKeyDialog(context),
                       ),
                     ],
                   ),

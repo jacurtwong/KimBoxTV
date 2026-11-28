@@ -467,7 +467,7 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
               Row(
                 children: [
                   const Text(
-                    '配置源管理',
+                    '系统与配置管理',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   ),
                   const Spacer(),
@@ -841,6 +841,91 @@ class _ConfigManagerDialogState extends ConsumerState<_ConfigManagerDialog> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.only(top: 12),
+                decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: KimTheme.border)),
+                ),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text(
+                      '系统工具：',
+                      style: TextStyle(fontSize: 12, color: KimTheme.textMuted),
+                    ),
+                    KimButton(
+                      label: '备份',
+                      variant: KimButtonVariant.secondary,
+                      fontSize: 12,
+                      tooltip: '备份与还原',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      onPressed: () => showBackupPanelDialog(context),
+                    ),
+                    KimButton(
+                      label: '清理缓存',
+                      variant: KimButtonVariant.secondary,
+                      fontSize: 12,
+                      tooltip: '清理本地海报图片与临时缓存（不影响收藏与历史）',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      onPressed: () async {
+                        final info = ctrl.getAppCacheInfo();
+                        final locText =
+                            info.path.isNotEmpty ? info.path : r'data\cache';
+                        final ok = await showKimConfirmDialog(
+                          context,
+                          title: '清理缓存',
+                          message:
+                              '检测到当前图片与运行缓存：${info.sizeMB} MB。\n\n• 存放位置：$locText\n• 说明：仅清理接口/分类快照缓存与内存海报缓存（及旧版遗留缓存），绝不影响您的配置源、收藏和播放历史。\n\n确定要立即清理缓存吗？',
+                        );
+                        if (ok && context.mounted) {
+                          final freed = ctrl.cleanAppCacheNow();
+                          await showKimConfirmDialog(
+                            context,
+                            title: '清理完成',
+                            message: '缓存清理完成！已释放约 $freed MB 磁盘空间。',
+                            alertOnly: true,
+                          );
+                        }
+                      },
+                    ),
+                    KimButton(
+                      label: '🐟 摸鱼键 (${st.bossKeyShortcut})',
+                      variant: KimButtonVariant.secondary,
+                      fontSize: 12,
+                      tooltip: '摸鱼快捷键: ${st.bossKeyShortcut} (点击设置)',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      onPressed: () => showBossKeyDialog(context),
+                    ),
+                    KimButton(
+                      label: '初始化',
+                      variant: KimButtonVariant.ghost,
+                      fontSize: 12,
+                      tooltip: '初始化：清空所有配置源、收藏与历史',
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      onPressed: () async {
+                        final ok = await showKimConfirmDialog(
+                          context,
+                          title: '初始化',
+                          message:
+                              '初始化将清空：\n· 所有配置源\n· 所有收藏\n· 所有播放历史\n\n确定继续吗？',
+                        );
+                        if (ok) {
+                          ctrl.resetAll();
+                          if (context.mounted) Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -907,33 +992,6 @@ class _BackupDialogState extends ConsumerState<_BackupDialog> {
                     style:
                         TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                 const Spacer(),
-                KimButton(
-                  label: '🧹 清理缓存',
-                  variant: KimButtonVariant.ghost,
-                  fontSize: 13,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  onPressed: () async {
-                    final info = ctrl.getAppCacheInfo();
-                    final ok = await showKimConfirmDialog(
-                      context,
-                      title: '清理缓存',
-                      message:
-                          '检测到当前海报图片与临时运行缓存：${info.sizeMB} MB。\n\n• 说明：仅清理海报封面与临时渲染缓存，绝不影响您的配置源、收藏和播放历史。\n\n确定要立即清理缓存吗？',
-                    );
-                    if (ok) {
-                      final freed = ctrl.cleanAppCacheNow();
-                      if (!context.mounted) return;
-                      await showKimConfirmDialog(
-                        context,
-                        title: '清理完成',
-                        message: '缓存清理完成！已释放约 $freed MB 磁盘空间。',
-                        alertOnly: true,
-                      );
-                    }
-                  },
-                ),
-                const SizedBox(width: 8),
                 KimButton(
                   label: '＋ 新建备份',
                   variant: KimButtonVariant.ghost,
